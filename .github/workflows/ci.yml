@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: rustup toolchain install stable --profile minimal -c rustfmt,clippy -t wasm32-unknown-unknown && rustup default stable
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - name: qpdf (validates every PDF the tests write)
@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: rustup toolchain install stable --profile minimal -t wasm32-unknown-unknown && rustup default stable
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: sudo apt-get update && sudo apt-get install -y qpdf
@@ -102,15 +102,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: rustup toolchain install nightly --profile minimal && rustup default nightly
+      - run: rustup toolchain install && rustup toolchain install nightly --profile minimal
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: fuzz
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - run: cargo install cargo-fuzz --locked
+      - run: cargo +nightly install cargo-fuzz --locked
       - name: Seed corpus from the generated fixtures
         run: cargo run -q -p pdfvault-fixtures -- fuzz/corpus/parse
-      - run: cargo fuzz run parse corpus/parse -- -max_total_time=60 -rss_limit_mb=2048
+      - run: cargo +nightly fuzz run parse corpus/parse -- -max_total_time=60 -rss_limit_mb=2048
         working-directory: fuzz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()

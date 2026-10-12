@@ -102,7 +102,7 @@ The tool registry (`packages/engine/src/tools.ts`) declares every tool once; the
 
 ## Development
 
-Requirements: Rust stable with the `wasm32-unknown-unknown` target, [wasm-pack](https://github.com/drager/wasm-pack) 0.15, [Bun](https://bun.sh) 1.2+, and `qpdf` (every PDF the Rust tests write must pass `qpdf --check`).
+Requirements: Rust (pinned in `rust-toolchain.toml`, with the `wasm32-unknown-unknown` target), [wasm-pack](https://github.com/drager/wasm-pack) 0.15, [Bun](https://bun.sh) 1.2+, and `qpdf` (every PDF the Rust tests write must pass `qpdf --check`).
 
 ```sh
 bun install

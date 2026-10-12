@@ -20,21 +20,21 @@ Run `pdfvault --version`. When it is missing, use `bunx pdfvault` (needs Bun) in
 
 ## Compress to a target size
 
-1. Pick the starting preset from the content:
+1. Read the target in decimal units and aim under it (2 MB or 2 Mo = 2,000,000 bytes). Pick the starting preset from the content:
 
    | Content | Preset | Effect |
    | --- | --- | --- |
    | Text, slides, vector diagrams | `lossless` | Same pixels; recompressed streams, merged duplicates, metadata, thumbnails and JavaScript removed |
    | Photos, mixed documents | `balanced` | Images downsampled to 150 DPI, JPEG quality 80 |
-   | Heavy photos, phone scans | `strong` | 110 DPI, quality 65 |
-   | Scans nothing else shrinks | `extreme` | Every page becomes one JPEG; text is no longer selectable |
+   | Scans, heavy photos | `strong` | 110 DPI, quality 65 |
+   | Last resort, when the ladder below runs out | `extreme` | Every page becomes one JPEG; text is no longer selectable |
 
 2. Run `pdfvault compress in.pdf -o out.pdf --preset <preset> --json`.
-3. Read `results[0].report`: `outputBytes` against the target, `keptOriginal` (true means this level found nothing to gain and returned the input), and `images[]` (each image's `dpi`, size before and after, and `action`).
-4. Above the target, climb one rung and rerun from the original file: `balanced` → `strong` → `strong --dpi 90 --quality 55` → add `--gray` → `extreme`. Use `extreme` only after telling the user it turns text into images, or with their agreement.
+3. Read `results[0].report`: `outputBytes` against the target, `keptOriginal` (true means this level found nothing to gain and returned the input), and `images[]` (each image's `dpi`, size before and after, and `action`). An image with `action: "skipped"` and a `reason` is in a format pdfvault leaves as is (JPEG 2000, JBIG2, unusual color spaces); a file made of those only shrinks with `extreme`.
+4. Above the target, climb the ladder from the rung you started on, always rerunning from the original file: `lossless` → `balanced` → `strong` → `strong --dpi 90 --quality 55` → add `--gray` → `extreme`. Use `extreme` only after telling the user it turns text into images, or with their agreement.
 5. Done when `outputBytes` is under the target, or when `extreme` is still above it: report the smallest result and what limited it (usually unsubset fonts or vector content in `lossless` output).
 
-Report the before and after sizes, the preset used, and the output path.
+Keep only the final file: delete the outputs of earlier rungs. Report the before and after sizes, the settings used, and the output path.
 
 ## Other tools
 

@@ -505,11 +505,7 @@ pub fn png_encode(img: &DynamicImage, colors: Option<u16>) -> Vec<u8> {
         && (indices.is_none() || palette.len() > target)
     {
         let nq = color_quant::NeuQuant::new(10, target, rgba.as_raw());
-        palette = nq
-            .color_map_rgba()
-            .chunks_exact(4)
-            .map(|c| [c[0], c[1], c[2], c[3]])
-            .collect();
+        palette = nq.color_map_rgba().as_chunks::<4>().0.to_vec();
         indices = Some(rgba.pixels().map(|p| nq.index_of(&p.0) as u8).collect());
     }
     if let Some(idx) = indices.filter(|_| !(gray && palette.len() > 16)) {
