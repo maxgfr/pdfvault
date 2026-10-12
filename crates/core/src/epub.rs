@@ -221,7 +221,8 @@ pub fn zip(files: &[(String, Vec<u8>)]) -> Vec<u8> {
             h.extend((name.len() as u16).to_le_bytes());
             h.extend(0u16.to_le_bytes());
             if central {
-                h.extend([0u8; 8]);
+                // comment length, disk number, internal attributes; then external attributes.
+                h.extend([0u8; 6]);
                 h.extend(0u32.to_le_bytes());
                 h.extend(offset.to_le_bytes());
             }
@@ -266,6 +267,37 @@ mod tests {
             i += 30 + nlen + csize;
         }
         out
+    }
+
+    /// Read the archive the way unzip does: through the central directory.
+    fn central_names(z: &[u8]) -> Vec<String> {
+        let eocd = z
+            .windows(4)
+            .rposition(|w| w == 0x06054b50u32.to_le_bytes())
+            .unwrap();
+        let count = u16::from_le_bytes([z[eocd + 10], z[eocd + 11]]) as usize;
+        let mut at = u32::from_le_bytes(z[eocd + 16..eocd + 20].try_into().unwrap()) as usize;
+        let mut names = vec![];
+        for _ in 0..count {
+            assert_eq!(z[at..at + 4], 0x02014b50u32.to_le_bytes());
+            let nlen = u16::from_le_bytes([z[at + 28], z[at + 29]]) as usize;
+            let extra = u16::from_le_bytes([z[at + 30], z[at + 31]]) as usize;
+            let comment = u16::from_le_bytes([z[at + 32], z[at + 33]]) as usize;
+            let local = u32::from_le_bytes(z[at + 42..at + 46].try_into().unwrap()) as usize;
+            assert_eq!(z[local..local + 4], 0x04034b50u32.to_le_bytes());
+            names.push(String::from_utf8(z[at + 46..at + 46 + nlen].to_vec()).unwrap());
+            at += 46 + nlen + extra + comment;
+        }
+        names
+    }
+
+    #[test]
+    fn central_directory_is_valid() {
+        let z = zip(&[
+            ("mimetype".into(), b"x".to_vec()),
+            ("a/b.txt".into(), b"hello".to_vec()),
+        ]);
+        assert_eq!(central_names(&z), ["mimetype", "a/b.txt"]);
     }
 
     #[test]

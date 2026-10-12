@@ -24,6 +24,15 @@ async function qpdfCheck(pdf: Uint8Array, password?: string) {
   expect({ code: proc.exitCode, out: proc.stdout.toString() }).toMatchObject({ code: 0 });
 }
 
+/** `unzip -t`: reads through the central directory, like every real unzipper. */
+function unzipTest(bytes: Uint8Array): string {
+  const path = `${process.env.TMPDIR ?? "/tmp"}/pdfvault-${crypto.randomUUID()}.zip`;
+  Bun.spawnSync(["sh", "-c", "cat > " + path], { stdin: bytes });
+  const out = Bun.spawnSync(["unzip", "-t", path]).stdout.toString();
+  Bun.spawnSync(["rm", "-f", path]);
+  return out;
+}
+
 const firstPdf = (r: RunResult) => {
   const f = r.files[0];
   expect(f?.ext).toBe("pdf");
@@ -209,6 +218,14 @@ describe("text and OCR", () => {
     const epub = await run("to-epub", [await fixture("text-3.pdf")], { ocr: false });
     expect(epub.files[0]!.ext).toBe("epub");
     expect(epub.files[0]!.bytes.subarray(0, 2)).toEqual(new Uint8Array([0x50, 0x4b]));
+    expect(unzipTest(epub.files[0]!.bytes)).toContain("No errors detected");
+  });
+
+  test("the ZIP of several outputs opens with unzip", async () => {
+    const z = await engine.core("zip", [new TextEncoder().encode("a"), new TextEncoder().encode("bb")], { names: ["a.txt", "b.txt"] });
+    const listing = unzipTest(z.files[0]!.bytes);
+    expect(listing).toContain("a.txt");
+    expect(listing).toContain("No errors detected");
   });
 
   test("OCR makes a scan searchable", async () => {

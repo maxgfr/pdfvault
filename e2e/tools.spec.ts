@@ -1,5 +1,6 @@
 // Every tool, once, through the real UI: drop files, set options, run, download.
 import { expect, test } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 import { isPdf, runTool, watch } from "./helpers.ts";
 
 type Case = { id: string; title: string; slots: string[][]; fill?: Record<string, string>; expect: "pdf" | "png" | "jpg" | "webp" | "text" | "epub" | "report" };
@@ -84,4 +85,6 @@ test("split offers a ZIP of all parts", async ({ page }) => {
   await runTool(page, "split", "Split PDF", [["text-5.pdf"]], { "Pages per file": "1" }, { download: false });
   const [dl] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Download all as ZIP" }).click()]);
   expect(dl.suggestedFilename()).toBe("split-results.zip");
+  const listing = execFileSync("unzip", ["-l", (await dl.path())!]).toString();
+  for (let i = 1; i <= 5; i++) expect(listing).toContain(`text-5-part-${i}-${i}.pdf`);
 });
