@@ -11,6 +11,7 @@
     "fixtures": "cargo run -q -p pdfvault-fixtures -- fixtures/generated",
     "build:web": "bun packages/web/build.ts",
     "build:cli": "bun packages/cli/build.ts",
+    "build:binaries": "bun scripts/cli-binaries.ts",
     "dev": "bun packages/web/build.ts --serve",
     "check:network": "bun scripts/check-no-network.ts packages/web/dist",
     "typecheck": "tsc --noEmit -p .",

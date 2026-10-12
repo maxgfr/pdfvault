@@ -77,7 +77,7 @@ jobs:
         run: bun run check:network
       - name: CLI binary, tested as shipped
         run: |
-          bun packages/cli/build.ts --binaries bun-linux-x64
+          bun scripts/cli-binaries.ts linux-x64
           PDFVAULT_BIN=packages/cli/dist/bin/pdfvault-linux-x64 bun test packages/cli
       - run: bunx playwright install --with-deps chromium
       - name: End to end, parity checked against the binary

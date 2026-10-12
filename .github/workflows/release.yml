@@ -1,11 +1,14 @@
 name: Release
 
-# Conventional-Commit releases once CI is green on main: semantic-release
-# picks the version (feat → minor, fix → patch, ! → major), the CLI is built
-# for six platforms, binaries and checksums are attached to the GitHub
-# release with provenance attestations, and the npm package is published
-# when the repository variable NPM_PUBLISH is "true" (npm trusted
-# publishing: no token is stored here).
+# Conventional-Commit releases once CI is green on main.
+#   release   builds the wasm once, runs semantic-release (feat → minor,
+#             fix → patch, ! → major): GitHub release, and npm when the
+#             repository variable NPM_PUBLISH is "true" (trusted publishing,
+#             no token stored here).
+#   binaries  compiles the standalone CLI per OS from that same wasm, macOS
+#             ones on macOS where they are re-signed, attests and attaches them.
+#   checksums writes SHA256SUMS for the attached binaries.
+# maxgfr/homebrew-tap picks the binaries up from the release.
 
 on:
   workflow_run:
@@ -21,6 +24,9 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+env:
+  WASM_PACK_VERSION: 0.15.0
+
 jobs:
   release:
     if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
@@ -30,9 +36,9 @@ jobs:
       issues: write
       pull-requests: write
       id-token: write
-      attestations: write
-    env:
-      WASM_PACK_VERSION: 0.15.0
+    outputs:
+      published: ${{ steps.release.outputs.published }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,8 +74,73 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_PUBLISH: ${{ vars.NPM_PUBLISH }}
-      - name: Provenance for the binaries
-        if: hashFiles('packages/cli/dist/bin/*') != ''
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      - name: Hand the exact engine to the binary builds
+        if: steps.release.outputs.published == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          subject-path: packages/cli/dist/bin/*
+          name: engine
+          path: |
+            packages/engine/wasm
+            models
+          retention-days: 3
+
+  binaries:
+    needs: release
+    if: needs.release.outputs.published == 'true'
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest
+            targets: macos-arm64 macos-x64
+          - runner: ubuntu-latest
+            targets: linux-x64 linux-arm64 windows-x64 windows-arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v${{ needs.release.outputs.version }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine
+      - run: bun scripts/cli-binaries.ts --version "$VERSION" ${{ matrix.targets }}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: packages/cli/dist/bin/pdfvault-*
+      - name: Attach them to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "v$VERSION" packages/cli/dist/bin/pdfvault-* --clobber
+      - run: (cd packages/cli/dist/bin && shasum -a 256 -- pdfvault-*) > "sums-${{ matrix.runner }}.txt"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sums-${{ matrix.runner }}
+          path: sums-${{ matrix.runner }}.txt
+
+  checksums:
+    needs: [release, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: v${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sums-*
+          merge-multiple: true
+      - run: |
+          cat sums-*.txt | sort -k2 > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$TAG" SHA256SUMS --clobber

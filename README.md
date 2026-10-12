@@ -56,7 +56,7 @@ cat in.pdf | bunx pdfvault extract - --pages 2-4 -o - > part.pdf
 bunx pdfvault img strip "photos/*.jpg" -o clean/
 ```
 
-Standalone binaries (macOS, Linux, Windows × arm64, x64, with the OCR models embedded) are on the [releases page](https://github.com/maxgfr/pdfvault/releases) with a `SHA256SUMS` file and provenance attestations (`gh attestation verify pdfvault-linux-x64 -R maxgfr/pdfvault`).
+Standalone binaries (macOS, Linux, Windows × arm64, x64, with the OCR models embedded; `brew install maxgfr/tap/pdfvault` on macOS and Linux) are on the [releases page](https://github.com/maxgfr/pdfvault/releases) with a `SHA256SUMS` file and provenance attestations (`gh attestation verify pdfvault-macos-arm64 -R maxgfr/pdfvault`).
 
 - Every command accepts globs, `-` for stdin, `-o -` for stdout, `-o dir/` for several outputs.
 - `--json` prints `{ command, ok, results: [{ input, ok, outputs, report | error }] }`. Error `code`s are stable: `invalid_pdf`, `password_required`, `wrong_password`, `limit`, `invalid_option`, `unsupported`, `image`.
@@ -113,7 +113,7 @@ cargo test --workspace   # Rust, incl. qpdf --check on outputs and OCR
 bun run test             # engine, CLI, vault crypto, no-network checker
 bun run dev              # site at http://localhost:4173/pdfvault/
 bun run e2e              # Playwright
-bun run build:cli --binaries
+bun run build:binaries macos-arm64   # standalone executable(s)
 ```
 
 Fuzzing: `cd fuzz && cargo +nightly fuzz run parse`.

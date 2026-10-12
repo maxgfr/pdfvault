@@ -1,7 +1,7 @@
-// semantic-release: version from Conventional Commits, CLI built for every
-// platform, binaries on the GitHub release, npm only when NPM_PUBLISH=true.
-// No commit is pushed back: the version lives in the tag, the release and
-// the published artifacts.
+// semantic-release: version from Conventional Commits, the npm bundle built
+// and published when NPM_PUBLISH=true, the GitHub release created. The
+// binaries are built per OS afterwards by the release workflow and attached
+// to that release. No commit is pushed back: the version lives in the tag.
 const publishToNpm = process.env.NPM_PUBLISH === "true";
 
 module.exports = {
@@ -13,17 +13,10 @@ module.exports = {
       "@semantic-release/exec",
       {
         prepareCmd: "bun scripts/prepare-release.ts ${nextRelease.version}",
+        successCmd: 'echo "published=true" >> "$GITHUB_OUTPUT" && echo "version=${nextRelease.version}" >> "$GITHUB_OUTPUT"',
       },
     ],
     ["@semantic-release/npm", { pkgRoot: "packages/cli", npmPublish: publishToNpm }],
-    [
-      "@semantic-release/github",
-      {
-        assets: [
-          { path: "packages/cli/dist/bin/pdfvault-*", label: "${path}" },
-          { path: "packages/cli/dist/bin/SHA256SUMS", label: "SHA256SUMS" },
-        ],
-      },
-    ],
+    "@semantic-release/github",
   ],
 };

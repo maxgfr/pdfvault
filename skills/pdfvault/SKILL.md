@@ -9,7 +9,7 @@ description: Compress, merge, split, reorder, protect, OCR and convert PDFs, and
 
 ## Set up
 
-Run `pdfvault --version`. When it is missing, use `bunx pdfvault` (needs Bun) in its place, or download the binary for the platform from https://github.com/maxgfr/pdfvault/releases and check it against `SHA256SUMS`.
+Run `pdfvault --version`. When it is missing, install it with `brew install maxgfr/tap/pdfvault` (macOS, Linux), or use `bunx pdfvault` (needs Bun) in its place, or download the binary for the platform from https://github.com/maxgfr/pdfvault/releases and check it against `SHA256SUMS`.
 
 ## Run every command the same way
 
