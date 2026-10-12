@@ -17,6 +17,7 @@ import {
   type Tool,
 } from "@pdfvault/engine";
 import { loader } from "./loader.ts";
+import { SKILL, install } from "./skill.ts";
 import pkg from "../package.json" with { type: "json" };
 
 const EXIT_OK = 0;
@@ -222,6 +223,9 @@ Usage: pdfvault <command> <files...> [options]
 Commands:
 ${lines.join("\n")}
 
+Agents:
+  ${"skill".padEnd(width)}Print the agent skill for this version; --install sets it up for Claude Code, Codex and others
+
 Global options:
   -o, --output <path>  output file, or directory for several outputs; "-" for stdout
   --json               print a machine-readable report on stdout
@@ -256,6 +260,57 @@ ${opts.join("\n") || "  (none)"}
   -o, --output <path>, --json, --force, --quiet`;
 }
 
+const SKILL_HELP = `pdfvault skill [--install [--dir <path>]] [--json]
+
+Print the agent skill (SKILL.md) that matches this pdfvault version.
+
+  --install     write it to ~/.agents/skills/pdfvault and link it into every
+                agent skills directory present (~/.claude/skills, ~/.codex/skills,
+                ~/.cursor/skills, ~/.gemini/skills); rerun after upgrading
+  --dir <path>  with --install: a plain copy in <path>/pdfvault instead
+  --json        report what was written`;
+
+async function skill(args: string[]): Promise<number> {
+  let installIt = false;
+  let json = false;
+  let dir: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--install") installIt = true;
+    else if (a === "--json") json = true;
+    else if (a === "--dir" || a.startsWith("--dir=")) {
+      dir = a.includes("=") ? a.slice(6) : args[++i];
+      if (!dir) {
+        process.stderr.write("pdfvault skill: --dir needs a path\n");
+        return EXIT_USAGE;
+      }
+    } else if (a === "--help" || a === "-h") {
+      process.stdout.write(SKILL_HELP + "\n");
+      return EXIT_OK;
+    } else {
+      process.stderr.write(`pdfvault skill: unknown option ${a}\n`);
+      return EXIT_USAGE;
+    }
+  }
+  if (dir && !installIt) {
+    process.stderr.write("pdfvault skill: --dir only applies with --install\n");
+    return EXIT_USAGE;
+  }
+  if (!installIt) {
+    process.stdout.write(SKILL.trimEnd() + "\n");
+    return EXIT_OK;
+  }
+  try {
+    const placements = await install(pkg.version, { dir });
+    if (json) process.stdout.write(JSON.stringify({ command: "skill", ok: true, version: pkg.version, placements }, null, 2) + "\n");
+    else for (const p of placements) process.stderr.write(`${p.action.padEnd(9)} ${p.path}\n`);
+    return EXIT_OK;
+  } catch (e) {
+    process.stderr.write(`pdfvault skill: ${e instanceof Error ? e.message : String(e)}\n`);
+    return EXIT_FAILED;
+  }
+}
+
 export async function main(argv: string[]): Promise<number> {
   const out = (s: string) => process.stdout.write(s + "\n");
   const err = (s: string) => process.stderr.write(s + "\n");
@@ -267,6 +322,7 @@ export async function main(argv: string[]): Promise<number> {
     out(pkg.version);
     return EXIT_OK;
   }
+  if (argv[0] === "skill") return skill(argv.slice(1));
   if (argv[0] === "list") {
     out(JSON.stringify(tools.map((t) => ({ id: t.id, title: t.title, input: t.input, aliases: t.aliases ?? [] })), null, 2));
     return EXIT_OK;

@@ -66,11 +66,15 @@ Standalone binaries (macOS, Linux, Windows × arm64, x64, with the OCR models em
 
 ## Agent skill
 
-`skills/pdfvault/SKILL.md` teaches a coding agent to use the CLI: which level for which content, how to read the `--json` report and climb levels until a target size is met, and the limits. Install it with:
+`skills/pdfvault/SKILL.md` teaches a coding agent to use the CLI: which level for which content, how to read the `--json` report and climb levels until a target size is met, and the limits. It ships inside the CLI, so the instructions always match the installed version:
 
 ```sh
-npx skills add maxgfr/pdfvault
+pdfvault skill --install    # ~/.agents/skills/pdfvault, linked into ~/.claude, ~/.codex… skills folders present
+pdfvault skill              # print it (an agent can read it directly)
+npx skills add maxgfr/pdfvault   # or straight from the repository
 ```
+
+Rerun `pdfvault skill --install` after upgrading the CLI.
 
 ## How privacy is enforced
 
