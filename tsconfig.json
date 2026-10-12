@@ -15,7 +15,8 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
-    "types": ["bun"]
+    "types": ["bun"],
+    "paths": { "@pdfvault/engine": ["./packages/engine/src/index.ts"] }
   },
   "include": ["packages/*/src", "packages/*/test", "packages/*/*.ts", "scripts", "e2e", "playwright.config.ts"],
   "exclude": ["packages/*/dist", "packages/engine/wasm"]
