@@ -17,6 +17,7 @@ module.exports = {
       },
     ],
     ["@semantic-release/npm", { pkgRoot: "packages/cli/dist", npmPublish: publishToNpm }],
-    "@semantic-release/github",
+    // A failed release shows in the Actions run; no tracking issue needed.
+    ["@semantic-release/github", { failComment: false, failTitle: false, successComment: false }],
   ],
 };

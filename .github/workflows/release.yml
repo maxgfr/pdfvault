@@ -59,6 +59,9 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run fetch-models
       - run: bun run build:wasm
+      # The npm plugin checks dist/package.json before its prepare step runs;
+      # prepare then stamps the real version over this placeholder.
+      - run: bun scripts/prepare-release.ts 0.0.0
       - name: semantic-release
         id: release
         run: >-
