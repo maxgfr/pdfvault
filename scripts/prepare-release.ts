@@ -11,3 +11,12 @@ await Bun.write(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
 
 const build = Bun.spawnSync(["bun", `${root}packages/cli/build.ts`], { stdout: "inherit", stderr: "inherit" });
 if (build.exitCode !== 0) process.exit(build.exitCode ?? 1);
+
+// npm publishes dist/ on its own: outside the workspace globs, so npm never
+// sees the other packages' `workspace:` dependencies.
+const dist = `${root}packages/cli/dist`;
+const { devDependencies: _dev, files: _files, ...published } = pkg;
+published.bin = { pdfvault: "pdfvault.js" };
+await Bun.write(`${dist}/package.json`, JSON.stringify(published, null, 2) + "\n");
+await Bun.write(`${dist}/README.md`, Bun.file(`${root}README.md`));
+await Bun.write(`${dist}/LICENSE`, Bun.file(`${root}LICENSE`));

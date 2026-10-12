@@ -19,9 +19,6 @@
       "bin": {
         "pdfvault": "dist/pdfvault.js",
       },
-      "devDependencies": {
-        "@pdfvault/engine": "workspace:*",
-      },
     },
     "packages/engine": {
       "name": "@pdfvault/engine",

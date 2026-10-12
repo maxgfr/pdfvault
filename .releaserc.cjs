@@ -16,7 +16,7 @@ module.exports = {
         successCmd: 'echo "published=true" >> "$GITHUB_OUTPUT" && echo "version=${nextRelease.version}" >> "$GITHUB_OUTPUT"',
       },
     ],
-    ["@semantic-release/npm", { pkgRoot: "packages/cli", npmPublish: publishToNpm }],
+    ["@semantic-release/npm", { pkgRoot: "packages/cli/dist", npmPublish: publishToNpm }],
     "@semantic-release/github",
   ],
 };
