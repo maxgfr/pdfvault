@@ -1,0 +1,10 @@
+{
+  "name": "@pdfvault/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./wasm/*": "./wasm/*"
+  }
+}

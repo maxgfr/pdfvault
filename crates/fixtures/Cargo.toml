@@ -1,0 +1,12 @@
+[package]
+name = "pdfvault-fixtures"
+description = "Writes the generated test documents used by the TypeScript and browser suites."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+pdfvault-core = { workspace = true, features = ["fixtures"] }
+pdfvault-render.workspace = true
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

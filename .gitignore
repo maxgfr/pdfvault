@@ -1,0 +1,14 @@
+/target
+node_modules
+/models
+/fixtures/generated
+/packages/engine/wasm
+/packages/web/dist
+/packages/cli/dist
+/test-results
+/playwright-report
+/scratch
+.impeccable/
+.DS_Store
+*.log
+*.bun-build

@@ -1,0 +1,17 @@
+[package]
+name = "pdfvault-ocr"
+description = "Latin-script OCR for pdfvault (ocrs + rten), run entirely on device."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+ocrs.workspace = true
+rten.workspace = true
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+pdfvault-core = { workspace = true, features = ["fixtures"] }
+pdfvault-render.workspace = true

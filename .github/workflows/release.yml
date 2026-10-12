@@ -1,0 +1,75 @@
+name: Release
+
+# Conventional-Commit releases once CI is green on main: semantic-release
+# picks the version (feat → minor, fix → patch, ! → major), the CLI is built
+# for six platforms, binaries and checksums are attached to the GitHub
+# release with provenance attestations, and the npm package is published
+# when the repository variable NPM_PUBLISH is "true" (npm trusted
+# publishing: no token is stored here).
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+      attestations: write
+    env:
+      WASM_PACK_VERSION: 0.15.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: main
+      - run: rustup toolchain install stable --profile minimal -t wasm32-unknown-unknown && rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-${{ env.WASM_PACK_VERSION }}
+      - run: command -v wasm-pack || cargo install wasm-pack --locked --version "$WASM_PACK_VERSION"
+      - run: bun install --frozen-lockfile
+      - run: bun run fetch-models
+      - run: bun run build:wasm
+      - name: semantic-release
+        id: release
+        run: >-
+          npx --yes
+          -p semantic-release@25.0.9
+          -p @semantic-release/commit-analyzer@13.0.1
+          -p @semantic-release/release-notes-generator@14.1.1
+          -p @semantic-release/exec@7.1.0
+          -p @semantic-release/npm@13.2.0
+          -p @semantic-release/github@12.0.10
+          -p conventional-changelog-conventionalcommits@10.4.1
+          semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_PUBLISH: ${{ vars.NPM_PUBLISH }}
+      - name: Provenance for the binaries
+        if: hashFiles('packages/cli/dist/bin/*') != ''
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: packages/cli/dist/bin/*

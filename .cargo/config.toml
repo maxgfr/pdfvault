@@ -1,0 +1,3 @@
+[target.wasm32-unknown-unknown]
+# Every browser pdfvault supports has wasm SIMD; rten and image use it.
+rustflags = ["-C", "target-feature=+simd128"]

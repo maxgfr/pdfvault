@@ -1,0 +1,17 @@
+{
+  "name": "pdfvault",
+  "version": "0.0.0-development",
+  "description": "Private PDF and image tools: compress, merge, split, OCR, protect and more. Runs entirely on your machine (Rust → WebAssembly).",
+  "keywords": ["pdf", "compress", "ocr", "merge", "split", "privacy", "wasm", "cli"],
+  "homepage": "https://maxgfr.github.io/pdfvault",
+  "repository": { "type": "git", "url": "git+https://github.com/maxgfr/pdfvault.git" },
+  "bugs": "https://github.com/maxgfr/pdfvault/issues",
+  "license": "MIT",
+  "author": "maxgfr",
+  "type": "module",
+  "bin": { "pdfvault": "dist/pdfvault.js" },
+  "files": ["dist"],
+  "engines": { "bun": ">=1.2" },
+  "dependencies": {},
+  "devDependencies": { "@pdfvault/engine": "workspace:*" }
+}
