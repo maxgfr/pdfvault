@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { runTool, watch } from "./helpers.ts";
+import { runTool, siteURL, watch } from "./helpers.ts";
 
 test("the page sets a strict CSP and no referrer", async ({ page }) => {
   await page.goto("./");
@@ -46,7 +46,7 @@ test("Trusted Types reject a script URL from elsewhere", async ({ page }) => {
 
 test("refuses to run inside a frame", async ({ page }) => {
   await page.goto("about:blank");
-  await page.setContent(`<iframe src="http://localhost:4173/pdfvault/" width="400" height="300"></iframe>`);
+  await page.setContent(`<iframe src="${siteURL}" width="400" height="300"></iframe>`);
   const frame = page.frames()[1]!;
   await frame.waitForLoadState();
   expect(await frame.locator("#root").count()).toBe(0);

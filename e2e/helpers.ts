@@ -2,6 +2,9 @@ import { expect, type Page } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
+export const siteURL = process.env.PDFVAULT_URL ?? "http://localhost:4173/pdfvault/";
+const siteOrigin = new URL(siteURL).origin;
+
 export const fixtures = new URL("../fixtures/generated/", import.meta.url).pathname;
 export const fixture = (name: string) => `${fixtures}${name}`;
 
@@ -12,7 +15,7 @@ export async function watch(page: Page) {
   const external: string[] = [];
   page.on("request", (r) => {
     const u = new URL(r.url());
-    if (!["http://localhost:4173", "null"].includes(u.origin) && !["blob:", "data:"].includes(u.protocol)) external.push(r.url());
+    if (![siteOrigin, "null"].includes(u.origin) && !["blob:", "data:"].includes(u.protocol)) external.push(r.url());
   });
   await page.addInitScript(() => {
     (window as unknown as { __csp: string[] }).__csp = [];
