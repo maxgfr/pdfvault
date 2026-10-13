@@ -20,6 +20,9 @@ const PATHS: Record<string, string> = {
   terminal: "M4 5h16v14H4zM7 9l3 3-3 3M12 15h5",
   code: "M8 8l-4 4 4 4M16 8l4 4-4 4M14 5l-4 14",
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+  view: "M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7-9.5-7-9.5-7zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
+  minus: "M5 12h14",
+  plus: "M12 5v14M5 12h14",
 };
 
 export function Icon({ name, label }: { name: string; label?: string }) {

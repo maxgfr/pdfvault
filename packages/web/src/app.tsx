@@ -5,6 +5,7 @@ import { Home } from "./home.tsx";
 import { Icon } from "./icons.tsx";
 import { ToolPage } from "./tool-page.tsx";
 import { VaultPage } from "./vault-page.tsx";
+import { ViewerPage } from "./viewer-page.tsx";
 import { vault } from "./vault.ts";
 
 function useRoute(): string {
@@ -36,7 +37,7 @@ export function App() {
   const unlocked = useSyncExternalStore((fn) => vault.subscribe(fn), () => vault.unlocked);
   const { offlineReady } = useOffline();
   useEffect(() => {
-    document.title = tool ? `${tool.title} · pdfvault` : route === "vault" ? "Vault · pdfvault" : "pdfvault: private PDF tools";
+    document.title = tool ? `${tool.title} · pdfvault` : route === "vault" ? "Vault · pdfvault" : route === "view" ? "PDF viewer · pdfvault" : "pdfvault: private PDF tools";
   }, [tool, route]);
 
   return (
@@ -54,16 +55,19 @@ export function App() {
           <span>pdfvault</span>
         </a>
         <nav aria-label="Main">
+          <a href="#/view" aria-current={route === "view" ? "page" : undefined}>
+            <Icon name="view" /> <span className="nav-label">Viewer</span>
+          </a>
           <a href="#/vault" aria-current={route === "vault" ? "page" : undefined}>
-            <Icon name={unlocked ? "unlock" : "lock"} /> Vault
+            <Icon name={unlocked ? "unlock" : "lock"} /> <span className="nav-label">Vault</span>
           </a>
           <a href="#/privacy" aria-current={route === "privacy" ? "page" : undefined}>
-            <Icon name="shield" /> Privacy
+            <Icon name="shield" /> <span className="nav-label">Privacy</span>
           </a>
         </nav>
       </header>
       <main id="main" tabIndex={-1}>
-        {tool ? <ToolPage key={tool.id} tool={tool} /> : route === "vault" ? <VaultPage /> : route === "privacy" ? <About /> : <Home />}
+        {tool ? <ToolPage key={tool.id} tool={tool} /> : route === "vault" ? <VaultPage /> : route === "view" ? <ViewerPage /> : route === "privacy" ? <About /> : <Home />}
       </main>
       <footer className="bottom">
         <p>

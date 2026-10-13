@@ -774,6 +774,80 @@ button:disabled {
   margin: 0;
 }
 
+/* ---------------------------------------------------------------- viewer */
+
+.viewer {
+  border-radius: var(--radius);
+  outline: 2px dashed transparent;
+  outline-offset: 8px;
+  transition: outline-color 0.15s ease;
+}
+.viewer[data-over="true"] {
+  outline-color: var(--accent);
+}
+.viewer-bar {
+  position: sticky;
+  top: 8px;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 8px 8px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+}
+.viewer-bar .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.zoom {
+  display: inline-flex;
+  align-items: center;
+}
+.zoom output {
+  min-width: 4.5ch;
+  text-align: center;
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
+}
+.viewer .locked {
+  margin: 16px 0 0;
+  align-items: flex-end;
+}
+.viewer .locked > .ico {
+  margin: 0 0 11px;
+}
+.viewer .error-text {
+  margin-top: 12px;
+}
+.pages {
+  display: grid;
+  justify-items: safe center;
+  gap: 16px;
+  margin-top: 18px;
+  overflow-x: auto;
+}
+.pages img {
+  width: var(--zoom, 100%);
+  max-width: none;
+  height: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow: var(--shadow);
+}
+.viewer-hint {
+  margin-top: 14px;
+  text-align: center;
+}
+
 /* ---------------------------------------------------------------- reports */
 
 .report {
@@ -952,6 +1026,18 @@ pre {
   .kv > div {
     grid-template-columns: 1fr;
     gap: 2px;
+  }
+}
+
+@media (max-width: 420px) {
+  /* Three links and the brand do not fit: icons only, names kept for screen readers. */
+  .nav-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 }
 

@@ -6,7 +6,7 @@ import { Report, bytes } from "./reports.tsx";
 import { runJob, warmUp, zipFiles } from "./runner.ts";
 import { vault, type VaultFile } from "./vault.ts";
 
-interface InFile {
+export interface InFile {
   key: string;
   name: string;
   bytes: Uint8Array;
@@ -76,7 +76,7 @@ function slots(tool: Tool): { label: string; accept: string; multiple: boolean; 
   }
 }
 
-function Drop({
+export function Drop({
   label,
   accept,
   multiple,

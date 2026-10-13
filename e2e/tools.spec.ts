@@ -1,7 +1,7 @@
 // Every tool, once, through the real UI: drop files, set options, run, download.
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { isPdf, runTool, watch } from "./helpers.ts";
+import { fixture, isPdf, runTool, watch } from "./helpers.ts";
 
 type Case = { id: string; title: string; slots: string[][]; fill?: Record<string, string>; expect: "pdf" | "png" | "jpg" | "webp" | "text" | "epub" | "report" };
 
@@ -87,4 +87,25 @@ test("split offers a ZIP of all parts", async ({ page }) => {
   expect(dl.suggestedFilename()).toBe("split-results.zip");
   const listing = execFileSync("unzip", ["-l", (await dl.path())!]).toString();
   for (let i = 1; i <= 5; i++) expect(listing).toContain(`text-5-part-${i}-${i}.pdf`);
+});
+
+test("the viewer shows a dropped PDF page by page", async ({ page }) => {
+  const w = await watch(page);
+  await page.goto("./#/view");
+  await expect(page.getByRole("heading", { level: 1, name: "PDF viewer" })).toBeVisible();
+  await page.locator('input[type="file"]').setInputFiles(fixture("text-3.pdf"));
+  const pages = page.getByRole("region", { name: "Pages" }).getByRole("img");
+  await expect(pages).toHaveCount(3, { timeout: 90_000 });
+  await expect(pages.first()).toHaveAttribute("alt", "Page 1");
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await expect(page.getByRole("group", { name: "Zoom" })).toContainText("125%");
+  await w.assertClean();
+});
+
+test("the viewer asks for a locked PDF's password", async ({ page }) => {
+  await page.goto("./#/view");
+  await page.locator('input[type="file"]').setInputFiles(fixture("locked.pdf"));
+  await page.getByLabel("This PDF is locked. Its password:").fill("secret");
+  await page.getByRole("button", { name: "Open", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Pages" }).getByRole("img").first()).toBeVisible({ timeout: 90_000 });
 });
