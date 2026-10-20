@@ -66,15 +66,14 @@ Standalone binaries (macOS, Linux, Windows × arm64, x64, with the OCR models em
 
 ## Agent skill
 
-`skills/pdfvault/SKILL.md` teaches a coding agent to use the CLI: which level for which content, how to read the `--json` report and climb levels until a target size is met, and the limits. It ships inside the CLI, so the instructions always match the installed version:
+`skills/pdfvault/SKILL.md` teaches a coding agent to use the CLI: which level for which content, how to read the `--json` report and climb levels until a target size is met, and the limits. Install it into any agent (Claude Code, Codex, OpenCode, Cursor…) with [skills](https://github.com/vercel-labs/skills):
 
 ```sh
-pdfvault skill --install    # ~/.agents/skills/pdfvault, linked into ~/.claude, ~/.codex… skills folders present
-pdfvault skill              # print it (an agent can read it directly)
-npx skills add maxgfr/pdfvault   # or straight from the repository
+npx skills add maxgfr/pdfvault             # pick the agents interactively
+npx skills add maxgfr/pdfvault -a codex    # or name them
 ```
 
-Rerun `pdfvault skill --install` after upgrading the CLI.
+`pdfvault skill` prints the copy that ships inside the CLI, so an agent can also read the instructions that match the installed version directly.
 
 ## How privacy is enforced
 
