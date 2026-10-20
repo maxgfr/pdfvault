@@ -1,7 +1,7 @@
 // Runs the real CLI as a subprocess: from source by default, or the compiled
 // binary when PDFVAULT_BIN points at one (CI does both).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { cp, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { cp, mkdtemp, realpath, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -18,8 +18,8 @@ beforeAll(async () => {
 });
 afterAll(() => rm(dir, { recursive: true, force: true }));
 
-function cli(args: string[], stdin?: Uint8Array, env?: Record<string, string>) {
-  const p = Bun.spawnSync([...bin, ...args], { cwd: dir, stdin: stdin ?? "ignore", env: env ? { ...process.env, ...env } : undefined });
+function cli(args: string[], stdin?: Uint8Array) {
+  const p = Bun.spawnSync([...bin, ...args], { cwd: dir, stdin: stdin ?? "ignore" });
   return { code: p.exitCode, stdout: p.stdout, out: p.stdout.toString(), err: p.stderr.toString() };
 }
 
@@ -133,31 +133,11 @@ describe("agent skill", () => {
     expect(cli(["--help"]).out).toContain("skill");
   });
 
-  test("installs next to npx skills, links agents present, and is idempotent", async () => {
-    const home = await realpath(await mkdtemp(join(tmpdir(), "pdfvault-home-")));
-    await mkdir(`${home}/.claude/skills`, { recursive: true });
-    await mkdir(`${home}/.codex/skills`, { recursive: true });
-    try {
-      const first = JSON.parse(cli(["skill", "--install", "--json"], undefined, { HOME: home }).out);
-      expect(first.placements.map((p: { action: string }) => p.action)).toEqual(["installed", "linked", "linked"]);
-      const md = await Bun.file(`${home}/.claude/skills/pdfvault/SKILL.md`).text();
-      expect(md).toStartWith("---\nname: pdfvault");
-      expect(md).toContain(`installed by pdfvault ${first.version}`);
-      expect(await Bun.file(`${home}/.codex/skills/pdfvault/SKILL.md`).text()).toBe(md);
-      const again = JSON.parse(cli(["skill", "--install", "--json"], undefined, { HOME: home }).out);
-      expect(again.placements.every((p: { action: string }) => p.action === "unchanged")).toBe(true);
-      // A stale copy from an older version is refreshed.
-      await Bun.write(`${home}/.agents/skills/pdfvault/SKILL.md`, "old");
-      const update = JSON.parse(cli(["skill", "--install", "--json"], undefined, { HOME: home }).out);
-      expect(update.placements[0].action).toBe("updated");
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  });
-
-  test("--dir writes a plain copy; bad flags are usage errors", async () => {
-    const r = JSON.parse(cli(["skill", "--install", "--dir", "agent-skills", "--json"]).out);
-    expect(r.placements[0]).toMatchObject({ path: join(dir, "agent-skills/pdfvault"), action: "installed" });
+  test("installing is left to npx skills; bad flags are usage errors", () => {
+    const r = cli(["skill", "--install"]);
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("npx skills add maxgfr/pdfvault");
+    expect(cli(["skill", "--help"]).out).toContain("npx skills add maxgfr/pdfvault");
     expect(cli(["skill", "--dir", "x"]).code).toBe(2);
     expect(cli(["skill", "--nope"]).code).toBe(2);
   });
