@@ -143,7 +143,7 @@ describe("agent skill", () => {
       const md = await Bun.file(`${home}/.claude/skills/pdfvault/SKILL.md`).text();
       expect(md).toStartWith("---\nname: pdfvault");
       expect(md).toContain(`installed by pdfvault ${first.version}`);
-      expect(await Bun.file(`${home}/.codex/skills/pdfvault/agents/openai.yaml`).text()).toContain("allow_implicit_invocation");
+      expect(await Bun.file(`${home}/.codex/skills/pdfvault/SKILL.md`).text()).toBe(md);
       const again = JSON.parse(cli(["skill", "--install", "--json"], undefined, { HOME: home }).out);
       expect(again.placements.every((p: { action: string }) => p.action === "unchanged")).toBe(true);
       // A stale copy from an older version is refreshed.
