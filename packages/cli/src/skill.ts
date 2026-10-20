@@ -10,11 +10,9 @@
 import { lstat, mkdir, readlink, rm, symlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import openai from "../../../skills/pdfvault/agents/openai.yaml" with { type: "text" };
 import skillMd from "../../../skills/pdfvault/SKILL.md" with { type: "text" };
 
 export const SKILL = skillMd as unknown as string;
-const OPENAI = openai as unknown as string;
 
 /** Agent directories that read skills, relative to $HOME. */
 const AGENT_DIRS = [".claude/skills", ".codex/skills", ".cursor/skills", ".gemini/skills"];
@@ -40,10 +38,9 @@ async function writeCopy(dir: string, version: string): Promise<Placement["actio
   const md = SKILL.trimEnd() + "\n" + stamp(version);
   const file = join(dir, "SKILL.md");
   const before = (await Bun.file(file).exists()) ? await Bun.file(file).text() : null;
-  if (before === md && (await Bun.file(join(dir, "agents/openai.yaml")).exists())) return "unchanged";
-  await mkdir(join(dir, "agents"), { recursive: true });
+  if (before === md) return "unchanged";
+  await mkdir(dir, { recursive: true });
   await Bun.write(file, md);
-  await Bun.write(join(dir, "agents/openai.yaml"), OPENAI);
   return before === null ? "installed" : "updated";
 }
 
