@@ -1,6 +1,11 @@
 //! Test helpers: every PDF we emit must pass `qpdf --check`.
 
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+// Tests run in parallel and may check identical bytes: a per-call counter keeps
+// one test from deleting the file another is still checking.
+static NEXT: AtomicU64 = AtomicU64::new(0);
 
 pub fn qpdf_check(bytes: &[u8]) {
     qpdf_check_with(bytes, None);
@@ -9,7 +14,8 @@ pub fn qpdf_check(bytes: &[u8]) {
 pub fn qpdf_check_with(bytes: &[u8], password: Option<&str>) {
     let dir = std::env::temp_dir().join(format!("pdfvault-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(format!("{:016x}.pdf", fxhash(bytes)));
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let path = dir.join(format!("{:016x}-{n}.pdf", fxhash(bytes)));
     std::fs::write(&path, bytes).unwrap();
     let mut cmd = Command::new("qpdf");
     if let Some(p) = password {
