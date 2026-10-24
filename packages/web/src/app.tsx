@@ -65,12 +65,6 @@ export function App() {
               <Icon name="file" /> <span className="nav-label">Your files</span> <span className="count">{files.length}</span>
             </a>
           ) : null}
-          <a href="#/edit" aria-current={route === "edit" ? "page" : undefined}>
-            <Icon name="edit" /> <span className="nav-label">Edit</span>
-          </a>
-          <a href="#/view" aria-current={route === "view" ? "page" : undefined}>
-            <Icon name="view" /> <span className="nav-label">Viewer</span>
-          </a>
           <a href="#/vault" aria-current={route === "vault" ? "page" : undefined}>
             <Icon name={unlocked ? "unlock" : "lock"} /> <span className="nav-label">Vault</span>
           </a>
