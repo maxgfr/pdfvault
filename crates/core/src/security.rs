@@ -174,26 +174,23 @@ pub fn inspect(input: &[u8]) -> Result<SecurityInfo> {
             permissions: None,
         });
     };
-    let dict = raw_object(input, id).unwrap_or_default();
-    let get = |key: &str| -> Option<i64> {
-        let name = format!("/{key}");
-        let mut from = 0;
-        let rest = loop {
-            let at = from + find(&dict[from..], name.as_bytes())?;
-            let rest = &dict[at + name.len()..];
-            // Skip longer names sharing the prefix, such as /Perms for /P.
-            if !rest.first().is_some_and(|c| c.is_ascii_alphanumeric()) {
-                break rest;
-            }
-            from = at + 1;
-        };
-        let s: String = String::from_utf8_lossy(rest)
-            .trim_start()
-            .chars()
-            .take_while(|c| c.is_ascii_digit() || *c == '-')
-            .collect();
-        s.parse().ok()
-    };
+    // Parsed, not scanned: its /O, /U, /OE, /UE and /Perms strings are random
+    // bytes that can hold anything, "/P" included.
+    let dict = raw_object(input, id)
+        .and_then(|mut body| {
+            // The lexer reads operands up to an operator: give it one.
+            body.extend(b" x");
+            crate::content::parse(&body)
+                .ok()?
+                .into_iter()
+                .next()?
+                .args
+                .into_iter()
+                .next()
+        })
+        .and_then(|o| o.as_dict().ok().cloned())
+        .unwrap_or_default();
+    let get = |key: &str| dict.get(key.as_bytes()).ok().and_then(|v| v.as_i64().ok());
     let algorithm = match get("V") {
         Some(5) => "AES-256",
         Some(4) => "AES-128 or RC4-128",
@@ -309,6 +306,19 @@ mod tests {
         assert!(!p.print && !p.copy && p.modify);
         // Opens without a password.
         assert_eq!(pdf::load(&enc, None).unwrap().get_pages().len(), 1);
+    }
+
+    #[test]
+    fn permissions_survive_random_key_material() {
+        // The /O, /U, /OE, /UE and /Perms strings are random bytes: whatever
+        // they contain must not be mistaken for the /P entry.
+        let input = fixtures::text_pdf(1);
+        for _ in 0..1500 {
+            let enc = encrypt(&input, &opts("", Some("boss"))).unwrap();
+            let info = inspect(&enc).unwrap();
+            assert!(info.permissions.is_some(), "permissions lost");
+            assert_eq!(info.revision, Some(6));
+        }
     }
 
     #[test]
