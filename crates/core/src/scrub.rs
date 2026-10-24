@@ -23,6 +23,9 @@ pub struct Removal {
     pub forms: HashSet<usize>,
     /// Image → boxes (page space) whose pixels turn black.
     pub blackout: HashMap<usize, Vec<[f32; 4]>>,
+    /// Operations wrapped in `q … cm … Q`: (stream, first op, last op, matrix in
+    /// the user space they run in).
+    pub transforms: Vec<(usize, usize, usize, Matrix)>,
 }
 
 impl Removal {
@@ -32,6 +35,7 @@ impl Removal {
             && self.images.is_empty()
             && self.forms.is_empty()
             && self.blackout.is_empty()
+            && self.transforms.is_empty()
     }
 }
 
@@ -339,6 +343,7 @@ pub fn apply(doc: &mut Document, page_id: ObjectId, page: &Page, r: &Removal) ->
         .chain(r.paths.iter().map(|&p| page.paths[p].stream))
         .chain(r.blackout.keys().map(|&i| page.images[i].stream))
         .chain(dropped_do.iter().map(|(s, _)| *s))
+        .chain(r.transforms.iter().map(|t| t.0))
         .any(|s| page.streams[s].broken);
     if touches_broken {
         return Err(unsupported("unreadable content stream"));
@@ -435,8 +440,16 @@ pub fn apply(doc: &mut Document, page_id: ObjectId, page: &Page, r: &Removal) ->
         }
         pending[s].push((o, doc.add_object(img)));
     }
+    let mut wraps: Vec<Vec<(Range<usize>, Matrix)>> = vec![vec![]; n_streams];
+    for &(s, first, last, m) in &r.transforms {
+        let ops = &page.streams[s].ops;
+        if dead[s] || first > last || last >= ops.len() {
+            continue;
+        }
+        wraps[s].push((ops[first].span.start..ops[last].span.end, m));
+    }
     for s in (0..n_streams).rev() {
-        if dead[s] || (edits[s].is_empty() && pending[s].is_empty()) {
+        if dead[s] || (edits[s].is_empty() && pending[s].is_empty() && wraps[s].is_empty()) {
             continue;
         }
         let stream = &page.streams[s];
@@ -465,6 +478,27 @@ pub fn apply(doc: &mut Document, page_id: ObjectId, page: &Page, r: &Removal) ->
             bytes.extend(b" Do");
             list.retain(|(r, _)| *r != stream.ops[o].span);
             list.push((stream.ops[o].span.clone(), bytes));
+        }
+        // Wrap the spans that move: around their new bytes when they also
+        // changed (a renamed form), around the original ones otherwise.
+        for (span, m) in std::mem::take(&mut wraps[s]) {
+            let pre = format!(
+                "q {} {} {} {} {} {} cm\n",
+                n(m[0]),
+                n(m[1]),
+                n(m[2]),
+                n(m[3]),
+                n(m[4]),
+                n(m[5])
+            );
+            let inner = match list.iter().position(|(r, _)| *r == span) {
+                Some(k) => list.remove(k).1,
+                None => stream.bytes[span.clone()].to_vec(),
+            };
+            let mut bytes = pre.into_bytes();
+            bytes.extend(inner);
+            bytes.extend(b"\nQ");
+            list.push((span, bytes));
         }
         let body = content::splice(&stream.bytes, list);
         let mut out = Stream::new(Dictionary::new(), body);

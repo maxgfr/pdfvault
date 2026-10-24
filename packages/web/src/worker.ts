@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 // One worker per job: the page stays responsive, and terminating the worker
 // returns every byte of wasm memory to the browser.
-import { Engine, EngineError, toolById, withDefaults, type Loader, type ModuleName, type Options } from "@pdfvault/engine";
+import { Engine, EngineError, previewPages, toolById, withDefaults, type EditOps, type Loader, type ModuleName, type Options } from "@pdfvault/engine";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -51,6 +51,14 @@ self.onmessage = async (event: MessageEvent<JobRequest>) => {
       if (!(DIRECT_OPS as readonly string[]).includes(op)) throw new EngineError("invalid_option", `unknown operation ${op}`);
       const out = await new Engine(loader).core(op, inputs, options);
       post({ type: "done", files: out.files, report: out.report }, out.files.map((f) => f.bytes.buffer as ArrayBuffer));
+      return;
+    }
+    if (toolId === "preview:edit") {
+      // The editor's exact preview: edits applied, touched pages rendered.
+      const o = options as { ops: EditOps; pages: number[]; dpi: number; password?: string };
+      const { pages, report } = await previewPages(new Engine(loader), inputs, o.ops, o.pages, o.dpi, o.password);
+      const files = pages.map((p) => ({ ...p.file, suffix: `page-${p.page}` }));
+      post({ type: "done", files, report }, files.map((f) => f.bytes.buffer as ArrayBuffer));
       return;
     }
     const tool = toolById.get(toolId);

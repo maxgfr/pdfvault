@@ -46,6 +46,26 @@ export type EditItem =
       italic?: boolean;
       fontFile?: FontRef;
       hscale?: number;
+      /** A paragraph from `text-runs`: the glyphs it takes out, and per character the glyph whose style it keeps. */
+      glyphs?: number[];
+      sources?: number[];
+      /** Reflow between `left` and `right`, `leading` apart. */
+      left?: number;
+      right?: number;
+      leading?: number;
+      align?: "left" | "right" | "center" | "justify";
+    }
+  | {
+      /** One of the page's own images, drawings or shapes, as `text-runs` lists them. */
+      type: "object";
+      page: number;
+      kind: "image" | "form" | "path";
+      index: number;
+      delete?: boolean;
+      dx?: number;
+      dy?: number;
+      sx?: number;
+      sy?: number;
     }
   | { type: "rect"; page: number; x: number; y: number; w: number; h: number; fill?: string; stroke?: string; lineWidth?: number; opacity?: number }
   | { type: "ink"; page: number; paths: number[][]; color?: string; lineWidth?: number; opacity?: number }
@@ -109,6 +129,47 @@ export interface TextRun {
   editable: boolean;
 }
 
+/** A paragraph as `text-runs` lists it (visual page space). */
+export interface Paragraph {
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  start: number;
+  left: number;
+  right: number;
+  /** Where rewritten text wraps (the column's edge; a lone line's end is no limit). */
+  wrap: number;
+  baseline: number;
+  leading: number;
+  align: "left" | "right" | "center" | "justify";
+  lines: number;
+  text: string;
+  sources: number[];
+  glyphs: number[];
+  size: number;
+  family: "sans" | "serif" | "mono";
+  bold: boolean;
+  italic: boolean;
+  color: string;
+  fontName: string;
+  fontFamily: string;
+  hscale: number;
+  editable: boolean;
+}
+
+/** An image, drawing or shape of a page, as `text-runs` lists it. */
+export interface PageObject {
+  page: number;
+  kind: "image" | "form" | "path";
+  index: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface EditReport {
   pages: number;
   blanks: number;
@@ -121,6 +182,9 @@ export interface EditReport {
   mixed: number;
   substituted: number;
   covered: number;
+  objects: number;
+  /** Rewritten paragraphs now reaching lower than before (nothing below moves). */
+  overflow: number;
   /** Pages with redactions (1-based), and those that had to become images. */
   redactedPages: number[];
   flattenedPages: number[];

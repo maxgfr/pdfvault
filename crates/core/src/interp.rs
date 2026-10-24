@@ -163,6 +163,8 @@ pub struct PathUse {
     pub bbox: [f32; 4],
     /// The path also sets the clip.
     pub clip: bool,
+    /// User space to page when it was painted.
+    pub ctm: Matrix,
 }
 
 #[derive(Debug, Clone)]
@@ -173,6 +175,8 @@ pub struct FormUse {
     /// The stream this drawing became (absent when not followed).
     pub child: Option<usize>,
     pub bbox: [f32; 4],
+    /// User space to page where it was drawn (before the form's /Matrix).
+    pub ctm: Matrix,
 }
 
 /// A marked-content sequence (BDC) whose properties hold ActualText, Alt or E.
@@ -611,6 +615,7 @@ impl<'a> Walker<'a> {
                             paint: i,
                             bbox,
                             clip,
+                            ctm: gs.ctm,
                         });
                     }
                     path.clear();
@@ -697,6 +702,7 @@ impl<'a> Walker<'a> {
                                 id,
                                 child: None,
                                 bbox,
+                                ctm: gs.ctm,
                             };
                             if depth < MAX_FORM_DEPTH && !ancestors.contains(&id) {
                                 let data = x
