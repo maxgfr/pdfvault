@@ -182,6 +182,28 @@ test("existing text is changed in place, in its own font", async ({ page }) => {
   await w.assertClean();
 });
 
+test("a digit the embedded font lacks: the rest of the line keeps its font", async ({ page }) => {
+  // "Total 2025" in an embedded subset of Liberation Sans, written by the CLI.
+  const dir = await mkdtemp(join(tmpdir(), "pdfvault-subset-"));
+  const subset = join(dir, "subset.pdf");
+  const add = JSON.stringify({ items: [{ type: "text", page: 0, x: 72, y: 400, text: "Total 2025", size: 18 }] });
+  execFileSync(cli[0]!, [...cli.slice(1), "edit", fixture("text-3.pdf"), "--ops", add, "-o", subset]);
+  await page.goto("./#/edit");
+  await page.getByLabel("PDF to edit").setInputFiles(subset);
+  await expect(page.getByRole("region", { name: "Pages" }).getByRole("img", { name: "Page 1" })).toBeVisible({ timeout: 90_000 });
+  await page.getByRole("button", { name: "Edit text" }).click();
+  // Baseline at 400 − 0.8 × 18 = 385.6 points from the bottom.
+  const p = await at(page, 1, 0.15, (792 - 390) / 792);
+  await page.mouse.click(p.x, p.y);
+  const line = page.getByRole("textbox", { name: "Edit this line" });
+  await expect(line).toHaveValue("Total 2025");
+  await line.fill("Total 2026");
+  await page.keyboard.press("Escape");
+  const out = await save(page);
+  await expect(page.locator(".ed-result")).toContainText("kept their font except for characters it did not include");
+  expect(text(out).split("\f")[0]).toContain("Total 2026");
+});
+
 test("text in any script, and a font asked for when none has the characters", async ({ page }) => {
   await open(page, "text-3.pdf");
   await page.getByRole("button", { name: "Add text" }).click();

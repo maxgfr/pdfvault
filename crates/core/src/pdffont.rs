@@ -42,6 +42,8 @@ enum Widths {
 pub struct Font {
     /// PostScript name without the subset tag.
     pub base: String,
+    /// The family as an installed copy would be named ("Times New Roman").
+    pub family_name: String,
     pub family: Family,
     pub bold: bool,
     pub italic: bool,
@@ -53,6 +55,8 @@ pub struct Font {
     simple_unicode: Vec<Option<String>>,
     to_unicode: Option<CMap>,
     cmap: Option<CMap>,
+    /// Two-byte codes that are CIDs (Identity-H/V).
+    identity: bool,
     vertical: bool,
     /// Glyph space to text space (0.001 except for Type 3 fonts).
     scale: f32,
@@ -190,6 +194,80 @@ pub fn glyph_name_text(name: &[u8]) -> Option<String> {
         .map(String::from)
 }
 
+/// The family name an embedded font program gives itself.
+#[cfg(feature = "typeset")]
+fn program_family(doc: &Document, descriptor: &Dictionary) -> Option<String> {
+    use skrifa::raw::types::NameId;
+    let stream = [&b"FontFile2"[..], b"FontFile3"]
+        .iter()
+        .find_map(|k| get(doc, descriptor, k))?
+        .as_stream()
+        .ok()?;
+    let data = stream
+        .decompressed_content()
+        .unwrap_or_else(|_| stream.content.clone());
+    let font = harfrust::Font::new(data, 0)?;
+    let names = font.names();
+    let name = names
+        .get(NameId::TYPOGRAPHIC_FAMILY_NAME)
+        .or_else(|| names.get(NameId::FAMILY_NAME))?;
+    let family: String = name.english_or_first()?.name().chars().collect();
+    let family = strip_subset(family.trim()).0.to_string();
+    (!family.is_empty()).then_some(family)
+}
+
+#[cfg(not(feature = "typeset"))]
+fn program_family(_: &Document, _: &Dictionary) -> Option<String> {
+    None
+}
+
+/// Ligatures from the Alphabetic Presentation Forms block, spelled out.
+pub fn unligate(s: &str) -> String {
+    if !s.chars().any(|c| ('\u{FB00}'..='\u{FB06}').contains(&c)) {
+        return s.to_string();
+    }
+    s.chars()
+        .map(|c| match c {
+            '\u{FB00}' => "ff".to_string(),
+            '\u{FB01}' => "fi".to_string(),
+            '\u{FB02}' => "fl".to_string(),
+            '\u{FB03}' => "ffi".to_string(),
+            '\u{FB04}' => "ffl".to_string(),
+            '\u{FB05}' => "\u{17F}t".to_string(),
+            '\u{FB06}' => "st".to_string(),
+            other => other.to_string(),
+        })
+        .collect()
+}
+
+/// A family name from a PostScript name: "TimesNewRomanPS-BoldMT" gives
+/// "Times New Roman", "HelveticaNeue-Light" "Helvetica Neue".
+pub fn family_of(postscript: &str) -> String {
+    let stem = postscript.split(['-', ',']).next().unwrap_or(postscript);
+    let mut stem = stem.to_string();
+    for suffix in ["PSMT", "PS", "MT"] {
+        if stem.len() > suffix.len() + 2 && stem.ends_with(suffix) {
+            stem.truncate(stem.len() - suffix.len());
+            break;
+        }
+    }
+    let mut out = String::new();
+    let chars: Vec<char> = stem.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
+        let next_lower = chars.get(i + 1).is_some_and(|n| n.is_lowercase());
+        let prev = if i > 0 { Some(chars[i - 1]) } else { None };
+        if i > 0
+            && c.is_uppercase()
+            && (prev.is_some_and(|p| p.is_lowercase())
+                || next_lower && prev.is_some_and(|p| p.is_uppercase()))
+        {
+            out.push(' ');
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn bf_text(b: BfString) -> String {
     match b {
         BfString::Char(c) => c.to_string(),
@@ -274,8 +352,16 @@ impl Font {
             || subtype == b"Type3";
         let std = std_metrics(&base, bold, italic);
 
+        let family_name = descriptor
+            .and_then(|d| get(doc, d, b"FontFamily"))
+            .and_then(|o| o.as_str().ok())
+            .map(crate::forms::decode_text)
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| descriptor.and_then(|d| program_family(doc, d)))
+            .unwrap_or_else(|| family_of(&base));
         let mut font = Font {
             family: guess_family(&base, flags),
+            family_name,
             base,
             bold,
             italic,
@@ -286,6 +372,7 @@ impl Font {
             simple_unicode: vec![],
             to_unicode: dict.get(b"ToUnicode").ok().and_then(|o| parse_cmap(doc, o)),
             cmap: None,
+            identity: false,
             vertical: false,
             scale: 0.001,
             ascent: 0.8,
@@ -313,6 +400,10 @@ impl Font {
         if subtype == b"Type0" {
             font.kind = Kind::Cid;
             let enc = dict.get(b"Encoding").ok();
+            font.identity = matches!(
+                enc.map(|o| pdf::resolve(doc, o)),
+                Some(Object::Name(n)) if n == b"Identity-H" || n == b"Identity-V"
+            );
             let cmap = match enc.map(|o| pdf::resolve(doc, o)) {
                 Some(Object::Name(n)) if n == b"Identity-H" => Some(CMap::identity_h()),
                 Some(Object::Name(n)) if n == b"Identity-V" => Some(CMap::identity_v()),
@@ -536,18 +627,20 @@ impl Font {
         self.vertical
     }
 
-    /// The text a code stands for, when the font says.
+    /// The text a code stands for, when the font says. Ligature characters
+    /// (ﬁ, ﬀ…) come out as their letters.
     pub fn text(&self, code: u32, len: usize) -> Option<String> {
-        if let Some(tu) = &self.to_unicode
-            && let Some(b) = tu.lookup_bf_string(code)
-        {
-            return Some(bf_text(b));
-        }
-        if self.kind == Kind::Cid {
-            return None;
-        }
         let _ = len;
-        self.simple_unicode.get(code as usize).cloned().flatten()
+        let raw = match &self.to_unicode {
+            Some(tu) => tu.lookup_bf_string(code).map(bf_text),
+            None => None,
+        }
+        .or_else(|| {
+            (self.kind != Kind::Cid)
+                .then(|| self.simple_unicode.get(code as usize).cloned().flatten())
+                .flatten()
+        })?;
+        Some(unligate(&raw))
     }
 
     /// Word spacing (Tw) applies to single-byte code 32 only.
@@ -570,6 +663,42 @@ impl Font {
                 .filter_map(|c| Some((self.text(c, 1)?, c)))
                 .collect(),
         )
+    }
+
+    /// Every code the ToUnicode map names, with its text: for a subset, the
+    /// characters the whole document uses (not just one page). Codes without
+    /// an explicit width in a CID font are left out, and a map that names far
+    /// more codes than a subset holds is not trusted.
+    pub fn mapped_codes(&self) -> Vec<(String, u32, usize)> {
+        let Some(tu) = &self.to_unicode else {
+            return vec![];
+        };
+        let mut out = vec![];
+        match &self.widths {
+            Widths::Simple(w) => {
+                for c in 0..256u32 {
+                    if w[c as usize] > 0.0
+                        && let Some(b) = tu.lookup_bf_string(c)
+                    {
+                        out.push((unligate(&bf_text(b)), c, 1));
+                    }
+                }
+            }
+            Widths::Cid { map, .. } if self.identity => {
+                for c in 0..=0xFFFFu32 {
+                    if (map.is_empty() || map.contains_key(&c))
+                        && let Some(b) = tu.lookup_bf_string(c)
+                    {
+                        out.push((unligate(&bf_text(b)), c, 2));
+                        if out.len() > 4000 {
+                            return vec![];
+                        }
+                    }
+                }
+            }
+            Widths::Cid { .. } => {}
+        }
+        out
     }
 
     /// Bytes for `code` as the font reads them.
@@ -677,6 +806,17 @@ mod tests {
         assert_eq!(glyph_name_text(b"A.sc").as_deref(), Some("A"));
         assert_eq!(glyph_name_text(b"g123"), None);
         assert!(f.charset().is_none(), "a subset has no full charset");
+    }
+
+    #[test]
+    fn family_names_and_ligatures() {
+        assert_eq!(family_of("TimesNewRomanPS-BoldMT"), "Times New Roman");
+        assert_eq!(family_of("ArialMT"), "Arial");
+        assert_eq!(family_of("HelveticaNeue-Light"), "Helvetica Neue");
+        assert_eq!(family_of("Georgia-Bold"), "Georgia");
+        assert_eq!(family_of("Avenir-Book"), "Avenir");
+        assert_eq!(family_of("Arial,Bold"), "Arial");
+        assert_eq!(unligate("chi\u{FB00}re \u{FB01}nale"), "chiffre finale");
     }
 
     #[test]

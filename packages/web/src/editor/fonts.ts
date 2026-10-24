@@ -14,9 +14,11 @@ const FALLBACK: Record<Family, string> = {
   mono: "'Courier New', Courier, monospace",
 };
 
-/** The CSS font stack previewing a bundled family. */
-export function previewFamily(family: Family): string {
-  return `"${CSS_NAME[family]}", ${FALLBACK[family]}`;
+/** The CSS font stack previewing a bundled family, after `installed` (a
+ *  document font's family, used when this device has it). */
+export function previewFamily(family: Family, installed?: string): string {
+  const own = installed?.replace(/["\\]/g, "").trim();
+  return `${own ? `"${own}", ` : ""}"${CSS_NAME[family]}", ${FALLBACK[family]}`;
 }
 
 const loaded = new Map<FontKey, Promise<void>>();
@@ -101,6 +103,32 @@ interface LocalFontData {
 }
 
 export const canQueryLocalFonts = () => typeof window !== "undefined" && "queryLocalFonts" in window;
+
+const nameKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+const installedCache = new Map<string, ExtraFont | null>();
+
+/** Complete copies of the document's fonts on this device, by PostScript name
+ *  (the browser asks for permission the first time). */
+export async function findInstalledFonts(names: string[]): Promise<ExtraFont[]> {
+  const query = (window as unknown as { queryLocalFonts?: () => Promise<LocalFontData[]> }).queryLocalFonts;
+  const todo = names.filter((n) => !installedCache.has(nameKey(n)));
+  if (query && todo.length) {
+    try {
+      const fonts = await query();
+      for (const name of todo) {
+        const hit = fonts.find((f) => nameKey(f.postscriptName) === nameKey(name));
+        installedCache.set(nameKey(name), hit ? { name: hit.postscriptName, bytes: new Uint8Array(await (await hit.blob()).arrayBuffer()), postscriptName: hit.postscriptName } : null);
+      }
+    } catch {
+      // Permission refused or no access: lines keep their font where they can.
+      return [];
+    }
+  }
+  return names.flatMap((n) => {
+    const f = installedCache.get(nameKey(n));
+    return f ? [f] : [];
+  });
+}
 
 /** Ask the browser for a font on this device likely to have `chars` (prompts for permission). */
 export async function findLocalFont(chars: string): Promise<ExtraFont | null> {

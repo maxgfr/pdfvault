@@ -7,7 +7,7 @@ import { coreReport, runJob, warmUp } from "../runner.ts";
 import { Drop } from "../tool-page.tsx";
 import { vault } from "../vault.ts";
 import { workspace } from "../workspace.ts";
-import { canQueryLocalFonts, findLocalFont, type ExtraFont, type Family } from "./fonts.ts";
+import { canQueryLocalFonts, findInstalledFonts, findLocalFont, type ExtraFont, type Family } from "./fonts.ts";
 import { initialDoc, sources, styleOf, toOps, useHistory, moveItem, type Item, type SrcPage, type StampImage, type ToolName } from "./model.ts";
 import { PageCanvas, type Style } from "./page-canvas.tsx";
 import { ImagePicker } from "./signature-pad.tsx";
@@ -30,7 +30,7 @@ const TOOLS: { id: ToolName; label: string; icon: string; hint: string }[] = [
     id: "edittext",
     label: "Edit text",
     icon: "edittext",
-    hint: "Click a line of the document's text to change it. It keeps its own font when that font has the letters; empty the line to remove it.",
+    hint: "Click a line of the document's text to change it; empty it to remove it. To keep the document's fonts exactly, the browser may ask to use the fonts installed on this device.",
   },
   { id: "text", label: "Add text", icon: "text", hint: "Click where the text should start, then type. Any language works." },
   { id: "whiteout", label: "Whiteout", icon: "whiteout", hint: "Drag over what should disappear behind white." },
@@ -279,12 +279,17 @@ export function EditorPage() {
     setMissing(null);
     abort.current = new AbortController();
     try {
+      // The installed copies of the fonts of changed lines: a line whose embedded
+      // subset lacks a character is redrawn in its real font rather than a close one.
+      const names = [...new Set(doc.items.flatMap((i) => (i.type === "replace" && (i.font ?? "auto") === "auto" && i.look ? [i.look.fontName] : [])))];
+      const installed = names.length && canQueryLocalFonts() ? await findInstalledFonts(names) : [];
       // Fonts the user added come after the images, tried for what the others lack.
       const fallbacks = fonts.map((f, i) => ({ file: images.length + i, name: f.postscriptName }));
       const ops = toOps(doc, pages.length, fallbacks);
+      if (installed.length) ops.substitutes = installed.map((f, i) => ({ name: f.name, file: images.length + fonts.length + i }));
       const r = await runJob(
         "edit",
-        [file.bytes, ...images.map((i) => i.bytes), ...fonts.map((f) => f.bytes)],
+        [file.bytes, ...images.map((i) => i.bytes), ...fonts.map((f) => f.bytes), ...installed.map((f) => f.bytes)],
         { ops: JSON.stringify(ops), password: file.password },
         redactions ? ["render"] : [],
         (label, fraction) => setProgress(fraction === null ? label : `${label} (${Math.round(fraction * 100)}%)`),
@@ -415,7 +420,7 @@ export function EditorPage() {
                         else setStyle({ family: v as Family });
                       }}
                     >
-                      {styleTarget === "replace" ? <option value="auto">Original font{typed?.look?.fontName ? ` (${typed.look.fontName})` : ""}</option> : null}
+                      {styleTarget === "replace" ? <option value="auto">Original font{typed?.look ? ` (${typed.look.familyName || typed.look.fontName})` : ""}</option> : null}
                       {FAMILIES.map((f) => (
                         <option key={f.id} value={f.id}>
                           {f.label}
@@ -537,6 +542,10 @@ export function EditorPage() {
                   ? ` (page${result.report.flattenedPages.length > 1 ? "s" : ""} ${result.report.flattenedPages.join(", ")} turned into images to be sure)`
                   : ""}
                 {result.report.covered ? ` · ${result.report.covered} line${result.report.covered > 1 ? "s" : ""} could only be covered, not removed` : ""}
+                {result.report.substituted ? ` · ${result.report.substituted} line${result.report.substituted > 1 ? "s" : ""} redrawn with the font installed on this device` : ""}
+                {result.report.mixed
+                  ? ` · ${result.report.mixed} line${result.report.mixed > 1 ? "s" : ""} kept their font except for characters it did not include`
+                  : ""}
               </span>
               <button type="button" className="primary small" onClick={() => download(result.name, result.bytes)}>
                 <Icon name="download" /> Download

@@ -69,6 +69,31 @@ pub struct EditOptions {
     pub bundled: BTreeMap<String, usize>,
     /// Fonts tried in order for characters a text's own font lacks.
     pub fallback_fonts: Vec<FontRef>,
+    /// Complete copies of the document's fonts (from this device, say): a
+    /// changed line whose embedded subset lacks a character is redrawn in
+    /// the copy whose PostScript name matches its font.
+    pub substitutes: Vec<Substitute>,
+}
+
+/// A font file among the attachments standing for the PDF font `name`
+/// (its PostScript name, as in "Georgia-Bold"), which also picks the face
+/// in a collection.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Substitute {
+    pub name: String,
+    pub file: usize,
+}
+
+/// Font names compared the way PDF producers spell them differently.
+fn same_name(a: &str, b: &str) -> bool {
+    let key = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    };
+    key(a) == key(b)
 }
 
 /// A font file among the attachments; `name` picks a face in a collection.
@@ -353,9 +378,13 @@ pub struct EditReport {
     pub fields: usize,
     pub drawn: usize,
     pub annotations: usize,
-    /// Lines of existing text rewritten, and how many kept their own font.
+    /// Lines of existing text rewritten; how many kept their own font
+    /// entirely, how many needed another font for some characters, and how
+    /// many were redrawn in a complete copy of their font.
     pub replaced: usize,
     pub same_font: usize,
+    pub mixed: usize,
+    pub substituted: usize,
     /// Rewritten lines whose old glyphs could not be taken out, only covered.
     pub covered: usize,
     /// Pages redacted in their content (1-based).
@@ -364,11 +393,25 @@ pub struct EditReport {
     pub flatten: Vec<usize>,
 }
 
-/// Which bundled fonts an edit needs, so the caller can pass just those.
+/// Which bundled fonts an edit needs, so the caller can pass just those, and
+/// which of the document's fonts lack characters the edit writes: a complete
+/// copy of one, given as a substitute, keeps its line in that font.
 #[derive(Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct EditPlan {
     pub fonts: Vec<String>,
+    pub wanted: Vec<WantedFont>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub struct WantedFont {
+    /// PostScript name, without the subset tag ("Georgia-Bold").
+    pub name: String,
+    /// Family as installed ("Georgia").
+    pub family: String,
+    pub bold: bool,
+    pub italic: bool,
 }
 
 fn norm(x: f32, y: f32, w: f32, h: f32) -> [f32; 4] {
@@ -524,20 +567,68 @@ fn highlight_annot(
     }))
 }
 
+/// A stretch of a rewritten line: codes in the page's own font, or text for
+/// another font when that one lacks the characters.
+#[derive(Debug, Clone)]
+enum Piece {
+    Codes(Vec<(u32, usize)>),
+    Text(String),
+}
+
 /// How a piece of text gets its font.
 #[derive(Debug, Clone)]
 #[cfg_attr(not(feature = "typeset"), allow(dead_code))]
 enum Choice {
-    /// The page font that already draws the text being replaced, with the
-    /// codes for each line.
-    Original(usize, Vec<Vec<(u32, usize)>>),
+    /// The page font that already draws the text being replaced, line by
+    /// line; what it lacks is written with `fallback`.
+    Original {
+        font: usize,
+        lines: Vec<Vec<Piece>>,
+        fallback: Option<Box<Choice>>,
+    },
     Bundled(String),
-    File(FontRef),
+    /// A font file; the bundled `backup` catches characters it lacks.
+    File(FontRef, Option<String>),
+    /// A complete copy of the page's font, with a bundled backup.
+    Substitute(FontRef, String),
+}
+
+impl Choice {
+    /// The bundled fonts this choice may draw with.
+    fn bundled(&self) -> Vec<String> {
+        match self {
+            Choice::Bundled(k) | Choice::Substitute(_, k) | Choice::File(_, Some(k)) => {
+                vec![k.clone()]
+            }
+            Choice::Original {
+                fallback: Some(f), ..
+            } => f.bundled(),
+            _ => vec![],
+        }
+    }
+}
+
+/// A line split where `font` lacks a character. `None` when it has none of
+/// them (spaces aside).
+fn pieces(page: &Page, font: usize, line: &str) -> Option<Vec<Piece>> {
+    let codes = textedit::codes_for(page, font, line)?;
+    let mut out: Vec<Piece> = vec![];
+    let mut any = false;
+    for (c, code) in line.chars().zip(codes) {
+        match (code, out.last_mut()) {
+            (Some(code), Some(Piece::Codes(v))) => v.push(code),
+            (Some(code), _) => out.push(Piece::Codes(vec![code])),
+            (None, Some(Piece::Text(t))) => t.push(c),
+            (None, _) => out.push(Piece::Text(c.to_string())),
+        }
+        any |= code.is_some() && !c.is_whitespace();
+    }
+    (any || line.trim().is_empty()).then_some(out)
 }
 
 fn text_choice(it: &TextItem) -> Result<Choice> {
     if let Some(f) = &it.font_file {
-        return Ok(Choice::File(f.clone()));
+        return Ok(Choice::File(f.clone(), None));
     }
     let family = textedit::parse_family(&it.font).ok_or_else(|| {
         Error::option(format!("unknown font '{}' (sans, serif or mono)", it.font))
@@ -576,16 +667,17 @@ fn replace_choice(
     page: &Page,
     index: usize,
     it: &ReplaceItem,
+    subs: &[Substitute],
 ) -> Result<(ReplaceItem, Vec<usize>, Choice)> {
     let it = &locate(page, index, it)?;
-    let (glyphs, choice) = choose(page, it)?;
+    let (glyphs, choice) = choose(page, it, subs)?;
     Ok((it.clone(), glyphs, choice))
 }
 
-fn choose(page: &Page, it: &ReplaceItem) -> Result<(Vec<usize>, Choice)> {
+fn choose(page: &Page, it: &ReplaceItem, subs: &[Substitute]) -> Result<(Vec<usize>, Choice)> {
     let glyphs = textedit::glyphs_in(page, it.bounds());
     if let Some(f) = &it.font_file {
-        return Ok((glyphs, Choice::File(f.clone())));
+        return Ok((glyphs, Choice::File(f.clone(), None)));
     }
     let original = textedit::dominant_font(page, &glyphs);
     let base = original.map(|f| &page.fonts[f]);
@@ -605,26 +697,53 @@ fn choose(page: &Page, it: &ReplaceItem) -> Result<(Vec<usize>, Choice)> {
         })?;
         return Ok((glyphs, style(family)));
     }
+    let backup = || style(base.map(|b| b.family).unwrap_or(Family::Sans));
     // The original font, unless the item asks for another weight or slant.
     if let Some(f) = original {
         let same_style = it.bold.is_none_or(|b| b == page.fonts[f].bold)
             && it.italic.is_none_or(|i| i == page.fonts[f].italic);
-        let lines: Option<Vec<_>> = same_style
-            .then(|| {
-                it.text
-                    .lines()
-                    .map(|l| textedit::encode_with(page, f, l))
-                    .collect()
-            })
+        let lines: Option<Vec<Vec<Piece>>> = same_style
+            .then(|| it.text.lines().map(|l| pieces(page, f, l)).collect())
             .flatten();
         if let Some(lines) = lines {
-            return Ok((glyphs, Choice::Original(f, lines)));
+            let complete = lines.iter().flatten().all(|p| matches!(p, Piece::Codes(_)));
+            if complete {
+                return Ok((
+                    glyphs,
+                    Choice::Original {
+                        font: f,
+                        lines,
+                        fallback: None,
+                    },
+                ));
+            }
+            // A complete copy of the font redraws the whole line in it;
+            // otherwise only the missing characters change font.
+            let key = match backup() {
+                Choice::Bundled(k) => k,
+                _ => unreachable!("styles are bundled fonts"),
+            };
+            if let Some(s) = subs
+                .iter()
+                .find(|s| same_name(&s.name, &page.fonts[f].base))
+            {
+                let r = FontRef {
+                    file: s.file,
+                    name: Some(s.name.clone()),
+                };
+                return Ok((glyphs, Choice::Substitute(r, key)));
+            }
+            return Ok((
+                glyphs,
+                Choice::Original {
+                    font: f,
+                    lines,
+                    fallback: Some(Box::new(Choice::Bundled(key))),
+                },
+            ));
         }
     }
-    Ok((
-        glyphs,
-        style(base.map(|b| b.family).unwrap_or(Family::Sans)),
-    ))
+    Ok((glyphs, backup()))
 }
 
 fn page_of(ids: &[ObjectId], p: usize) -> Result<ObjectId> {
@@ -645,6 +764,7 @@ pub fn plan(pdf_bytes: &[u8], o: &EditOptions) -> Result<EditPlan> {
     let ids = pdf::page_ids(&doc);
     let mut pages: HashMap<usize, Page> = HashMap::new();
     let mut fonts = BTreeSet::new();
+    let mut wanted = BTreeSet::new();
     for item in &o.items {
         let choice = match item {
             Item::Text(t) if !t.text.trim().is_empty() => text_choice(t)?,
@@ -653,16 +773,30 @@ pub fn plan(pdf_bytes: &[u8], o: &EditOptions) -> Result<EditPlan> {
                 let page = pages
                     .entry(r.page)
                     .or_insert_with(|| interp::interpret(&doc, id));
-                replace_choice(page, r.page, r)?.2
+                let choice = replace_choice(page, r.page, r, &o.substitutes)?.2;
+                if let Choice::Original {
+                    font,
+                    fallback: Some(_),
+                    ..
+                } = &choice
+                {
+                    let f = &page.fonts[*font];
+                    wanted.insert(WantedFont {
+                        name: f.base.clone(),
+                        family: f.family_name.clone(),
+                        bold: f.bold,
+                        italic: f.italic,
+                    });
+                }
+                choice
             }
             _ => continue,
         };
-        if let Choice::Bundled(k) = choice {
-            fonts.insert(k);
-        }
+        fonts.extend(choice.bundled());
     }
     Ok(EditPlan {
         fonts: fonts.into_iter().collect(),
+        wanted: wanted.into_iter().collect(),
     })
 }
 
@@ -715,20 +849,46 @@ impl<'a> Fonts<'a> {
 
     /// The faces to try for `choice`, in order.
     fn chain(&mut self, choice: &Choice) -> Result<Vec<usize>> {
-        let primary = match choice {
-            Choice::File(r) => self.slot(r)?,
-            Choice::Bundled(k) => {
-                let file = *self
-                    .bundled
-                    .get(k)
-                    .ok_or_else(|| Error::option(format!("the bundled font {k} was not given")))?;
-                self.slot(&FontRef { file, name: None })?
-            }
-            Choice::Original(..) => unreachable!("original fonts are not typeset"),
+        let (primary, backup) = match choice {
+            Choice::File(r, backup) => (self.slot(r)?, backup.clone()),
+            Choice::Substitute(r, backup) => (self.slot(r)?, Some(backup.clone())),
+            Choice::Bundled(k) => (self.bundled_slot(k)?, None),
+            Choice::Original { .. } => unreachable!("original fonts are not typeset"),
         };
         let mut chain = vec![primary];
         chain.extend(self.fallbacks.iter().copied().filter(|s| *s != primary));
+        if let Some(k) = backup {
+            let s = self.bundled_slot(&k)?;
+            if !chain.contains(&s) {
+                chain.push(s);
+            }
+        }
         Ok(chain)
+    }
+
+    fn bundled_slot(&mut self, key: &str) -> Result<usize> {
+        let file = *self
+            .bundled
+            .get(key)
+            .ok_or_else(|| Error::option(format!("the bundled font {key} was not given")))?;
+        self.slot(&FontRef { file, name: None })
+    }
+
+    /// One stretch of text drawn from (`x`, `y`); returns the operators and its width.
+    #[allow(clippy::too_many_arguments)]
+    fn piece(
+        &mut self,
+        doc: &mut Document,
+        page: ObjectId,
+        choice: &Choice,
+        text: &str,
+        x: f32,
+        y: f32,
+        size: f32,
+    ) -> Result<(Vec<u8>, f32)> {
+        let chain = self.chain(choice)?;
+        let laid = self.ts.layout(&chain, text, size)?;
+        Ok((self.ts.draw(doc, page, &laid, x, y, size)?, laid.width))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -778,7 +938,23 @@ impl Fonts {
         _: f32,
     ) -> Result<Vec<u8>> {
         Err(Error::Unsupported(
-            "writing text needs the render engine".into(),
+            "writing text needs the typeset feature".into(),
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn piece(
+        &mut self,
+        _: &mut Document,
+        _: ObjectId,
+        _: &Choice,
+        _: &str,
+        _: f32,
+        _: f32,
+        _: f32,
+    ) -> Result<(Vec<u8>, f32)> {
+        Err(Error::Unsupported(
+            "writing text needs the typeset feature".into(),
         ))
     }
 
@@ -787,34 +963,53 @@ impl Fonts {
     }
 }
 
-/// Text in a font the page already has, from codes that font maps.
+/// Text in a font the page already has, from codes that font maps, with the
+/// characters it lacks written by `fallback`.
+#[allow(clippy::too_many_arguments)]
 fn original_lines(
     doc: &mut Document,
     page: ObjectId,
     info: &Page,
     font: usize,
-    lines: &[Vec<(u32, usize)>],
+    lines: &[Vec<Piece>],
+    fallback: Option<&Choice>,
+    fonts: &mut Fonts,
     (x, baseline, size, hscale): (f32, f32, f32, f32),
 ) -> Result<Vec<u8>> {
     let name = pdf::add_resource(doc, page, b"Font", "PVO", info.font_objs[font].clone())?;
     let f = &info.fonts[font];
     let mut out = vec![];
-    for (i, codes) in lines.iter().enumerate() {
-        let bytes: Vec<u8> = codes
-            .iter()
-            .flat_map(|&(c, len)| f.code_bytes(c, len))
-            .collect();
-        out.extend(b"BT /");
-        out.extend(&name);
-        out.extend(format!(" {} Tf ", n(size)).into_bytes());
-        if (hscale - 100.0).abs() > 0.01 {
-            out.extend(format!("{} Tz ", n(hscale)).into_bytes());
+    for (i, line) in lines.iter().enumerate() {
+        let y = baseline - size * TEXT_LINE * i as f32;
+        let mut pen = x;
+        for piece in line {
+            match piece {
+                Piece::Codes(codes) => {
+                    let bytes: Vec<u8> = codes
+                        .iter()
+                        .flat_map(|&(c, len)| f.code_bytes(c, len))
+                        .collect();
+                    out.extend(b"BT /");
+                    out.extend(&name);
+                    out.extend(format!(" {} Tf ", n(size)).into_bytes());
+                    if (hscale - 100.0).abs() > 0.01 {
+                        out.extend(format!("{} Tz ", n(hscale)).into_bytes());
+                    }
+                    out.extend(format!("{} {} Td ", n(pen), n(y)).into_bytes());
+                    crate::content::write_obj(&mut out, &Object::string_literal(bytes));
+                    out.extend(b" Tj ET\n");
+                    let w: f32 = codes.iter().map(|&(c, len)| f.width(c, len)).sum();
+                    pen += w * size * hscale / 100.0;
+                }
+                Piece::Text(text) => {
+                    let choice = fallback
+                        .ok_or_else(|| Error::Unsupported("no font for these characters".into()))?;
+                    let (ops, width) = fonts.piece(doc, page, choice, text, pen, y, size)?;
+                    out.extend(ops);
+                    pen += width;
+                }
+            }
         }
-        out.extend(
-            format!("{} {} Td ", n(x), n(baseline - size * TEXT_LINE * i as f32)).into_bytes(),
-        );
-        crate::content::write_obj(&mut out, &Object::string_literal(bytes));
-        out.extend(b" Tj ET\n");
     }
     Ok(out)
 }
@@ -847,7 +1042,7 @@ pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)
                 let page = pages
                     .entry(r.page)
                     .or_insert_with(|| interp::interpret(&doc, id));
-                let (placed, glyphs, choice) = replace_choice(page, r.page, r)?;
+                let (placed, glyphs, choice) = replace_choice(page, r.page, r, &o.substitutes)?;
                 replaces.push((i, glyphs, choice, placed));
             }
             Item::Redact(b) => {
@@ -989,20 +1184,35 @@ pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)
                 if !r.text.trim().is_empty() {
                     out.extend(format!("{} rg\n", rgb(color)).into_bytes());
                     match choice {
-                        Choice::Original(f, lines) => {
-                            report.same_font += 1;
+                        Choice::Original {
+                            font,
+                            lines,
+                            fallback,
+                        } => {
+                            if fallback.is_some() {
+                                report.mixed += 1;
+                            } else {
+                                report.same_font += 1;
+                            }
                             out.extend(original_lines(
                                 &mut doc,
                                 page,
                                 info,
-                                *f,
+                                *font,
                                 lines,
+                                fallback.as_deref(),
+                                &mut fonts,
                                 (x, baseline, size, hscale),
                             )?);
                         }
-                        other => out.extend(
-                            fonts.lines(&mut doc, page, other, &r.text, x, baseline, size)?,
-                        ),
+                        other => {
+                            if matches!(other, Choice::Substitute(..)) {
+                                report.substituted += 1;
+                            }
+                            out.extend(
+                                fonts.lines(&mut doc, page, other, &r.text, x, baseline, size)?,
+                            )
+                        }
                     }
                 }
                 out.extend(b"Q\n");
@@ -1401,6 +1611,101 @@ mod tests {
         let after = run_box(&out, "Страница 1");
         assert!(after.bold && (after.size - 24.0).abs() < 0.01);
         assert!(!read(&out, 0).contains("Page 1"));
+    }
+
+    /// A page whose only text is "Rapport 2025" in an embedded subset of
+    /// Liberation Sans, as PDF producers write fonts.
+    fn subset_pdf() -> Vec<u8> {
+        let mut o = parse(
+            r#"{ "items": [{ "type": "text", "page": 0, "x": 72, "y": 700, "text": "Rapport 2025", "size": 20 }] }"#,
+        );
+        let inputs = with_fonts(fixtures::text_pdf(1), vec![], &mut o);
+        let (out, _) = edit(&inputs, &o).unwrap();
+        let mut doc = pdf::load(&out, None).unwrap();
+        let page = pdf::page_ids(&doc)[0];
+        // Keep only the added line: drop the fixture's Helvetica text.
+        let p = interp::interpret(&doc, page);
+        let mut r = crate::scrub::Removal::default();
+        r.glyphs.extend(
+            p.glyphs
+                .iter()
+                .enumerate()
+                .filter(|(_, g)| !p.fonts[g.font].base.contains("Liberation"))
+                .map(|(i, _)| i),
+        );
+        crate::scrub::apply(&mut doc, page, &p, &r).unwrap();
+        pdf::save(&mut doc).unwrap()
+    }
+
+    #[test]
+    fn only_the_characters_a_subset_lacks_change_font() {
+        let pdf = subset_pdf();
+        let mut o = parse(
+            r#"{ "items": [{ "type": "replace", "page": 0, "find": "2025", "text": "2052" }] }"#,
+        );
+        assert!(
+            plan(&pdf, &o).unwrap().wanted.is_empty(),
+            "every digit is there"
+        );
+        let inputs = with_fonts(pdf.clone(), vec![], &mut o);
+        let (_, rep) = edit(&inputs, &o).unwrap();
+        assert_eq!((rep.same_font, rep.mixed), (1, 0));
+
+        let mut o = parse(
+            r#"{ "items": [{ "type": "replace", "page": 0, "find": "2025", "text": "2026" }] }"#,
+        );
+        let p = plan(&pdf, &o).unwrap();
+        assert_eq!(p.wanted.len(), 1);
+        assert_eq!(p.wanted[0].name, "LiberationSans");
+        assert_eq!(p.wanted[0].family, "Liberation Sans");
+        let inputs = with_fonts(pdf, vec![], &mut o);
+        let (out, rep) = edit(&inputs, &o).unwrap();
+        assert_eq!((rep.same_font, rep.mixed, rep.substituted), (0, 1, 0));
+        qpdf_check(&out);
+        assert_eq!(read(&out, 0).replace(' ', ""), "Rapport2026");
+        // "Rapport 202" is still drawn with the page's own subset.
+        let doc = pdf::load(&out, None).unwrap();
+        let q = interp::interpret(&doc, pdf::page_ids(&doc)[0]);
+        let fonts: Vec<&str> = q
+            .glyphs
+            .iter()
+            .map(|g| q.fonts[g.font].base.as_str())
+            .collect();
+        assert_eq!(fonts.len(), 12);
+        assert!(fonts[..11].iter().all(|f| *f == fonts[0]));
+        assert_eq!(q.glyphs[11].text.as_deref(), Some("6"));
+        let ends: Vec<f32> = q.glyphs.iter().map(|g| g.origin[0]).collect();
+        assert!(
+            ends.windows(2).all(|w| w[1] > w[0]),
+            "glyphs run left to right without overlap"
+        );
+    }
+
+    #[test]
+    fn a_complete_copy_of_the_font_redraws_the_line() {
+        let pdf = subset_pdf();
+        let mut o = parse(
+            r#"{ "substitutes": [{ "name": "LiberationSans", "file": 0 }],
+                 "items": [{ "type": "replace", "page": 0, "find": "2025", "text": "2026" }] }"#,
+        );
+        assert!(plan(&pdf, &o).unwrap().wanted.is_empty());
+        let inputs = with_fonts(
+            pdf,
+            vec![fixtures::bundled_font("LiberationSans-Regular.ttf")],
+            &mut o,
+        );
+        let (out, rep) = edit(&inputs, &o).unwrap();
+        assert_eq!(rep.substituted, 1);
+        qpdf_check(&out);
+        let doc = pdf::load(&out, None).unwrap();
+        let q = interp::interpret(&doc, pdf::page_ids(&doc)[0]);
+        let text: String = q.glyphs.iter().filter_map(|g| g.text.clone()).collect();
+        assert_eq!(text, "Rapport 2026");
+        let first = q.glyphs[0].font;
+        assert!(
+            q.glyphs.iter().all(|g| g.font == first),
+            "one font for the whole line"
+        );
     }
 
     #[test]
