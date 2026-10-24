@@ -54,7 +54,10 @@ export function quickActions(sel: WorkFile[]): WorkAction[] {
     if (images.length) groups.push({ tool: tool("img-compress"), slots: [images.map(asIn)], label: `${images.length} image${images.length > 1 ? "s" : ""}` });
     out.push({ id: "compress", label: "Compress", icon: "compress", plan: { groups } });
   }
-  if (pdfs.length === 1 && sel.length === 1) out.push({ id: "edit", label: "Edit", icon: "edit", plan: { route: "#/edit", file: pdfs[0]!.key } });
+  if (pdfs.length === 1 && sel.length === 1) {
+    out.push({ id: "view", label: "View", icon: "view", plan: { route: "#/view", file: pdfs[0]!.key } });
+    out.push({ id: "edit", label: "Edit", icon: "edit", plan: { route: "#/edit", file: pdfs[0]!.key } });
+  }
   if (images.length === 1 && sel.length === 1) out.push({ id: "img-edit", label: "Crop & rotate", icon: "edit", plan: { groups: fit(tool("img-edit"), sel)! } });
   if (usable && sel.length >= 2) out.push({ id: "combine", label: "Combine into one PDF", icon: "organize", plan: { groups: fit(tool("combine"), sel)! } });
   if (images.length === 1 && sel.length === 1) out.push({ id: "to-pdf", label: "Make a PDF", icon: "convert", plan: { groups: fit(tool("img2pdf"), sel)! } });

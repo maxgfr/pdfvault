@@ -2,12 +2,27 @@
 // form values. Everything here is plain data; `toOps` turns it into the JSON
 // the `edit` tool reads, so what you see is exactly what the engine writes.
 
-import type { EditItem, EditOps } from "@pdfvault/engine";
+import type { EditItem, EditOps, FontRef } from "@pdfvault/engine";
 import { useCallback, useState } from "react";
+import type { Family } from "./fonts.ts";
 
-export type ToolName = "select" | "text" | "whiteout" | "rect" | "highlight" | "ink" | "note" | "image" | "redact";
+export type ToolName = "select" | "edittext" | "text" | "whiteout" | "rect" | "highlight" | "ink" | "note" | "image" | "redact";
 
-export type Item = EditItem & { id: string };
+/** How the text being rewritten looked, for the preview (never sent to the engine). */
+export interface Look {
+  family: Family;
+  bold: boolean;
+  italic: boolean;
+  /** The page colour behind the original text. */
+  bg: string;
+  fontName: string;
+  /** The line as it was, to tell an untouched edit from a real one. */
+  original: string;
+  size: number;
+  color: string;
+}
+
+export type Item = EditItem & { id: string; look?: Look; run?: number };
 
 /** One output page: which source page it shows and how much it is turned. */
 export interface PageRef {
@@ -43,6 +58,7 @@ export interface Doc {
   items: Item[];
   fields: Record<string, string | boolean>;
   flattenFields: boolean;
+  redaction: "remove" | "flatten";
 }
 
 export const newId = () => crypto.randomUUID();
@@ -54,6 +70,7 @@ export function initialDoc(pageCount: number): Doc {
     items: [],
     fields: {},
     flattenFields: false,
+    redaction: "remove",
   };
 }
 
@@ -71,9 +88,29 @@ export function sources(pages: SrcPage[], doc: Doc): SrcPage[] {
   ];
 }
 
+/** The family, weight and slant a text or rewritten line is drawn with. */
+export function styleOf(it: Item): { family: Family; bold: boolean; italic: boolean } {
+  if (it.type === "replace") {
+    const look = it.look ?? { family: "sans", bold: false, italic: false };
+    return { family: it.font && it.font !== "auto" ? it.font : look.family, bold: it.bold ?? look.bold, italic: it.italic ?? look.italic };
+  }
+  if (it.type === "text") return { family: it.font ?? "sans", bold: Boolean(it.bold), italic: Boolean(it.italic) };
+  return { family: "sans", bold: false, italic: false };
+}
+
 /** Box of an item in visual page space: [x0, y0, x1, y1], y up. */
 export function bounds(it: EditItem): [number, number, number, number] {
   switch (it.type) {
+    case "replace": {
+      // The text taken out, and the new text, which may run longer.
+      const size = it.size ?? it.h;
+      const lines = it.text.split("\n");
+      const start = it.start ?? it.x;
+      const width = Math.max(...lines.map((l) => l.length * size * 0.55));
+      const base = it.baseline ?? it.y;
+      const bottom = base - size * (0.25 + 1.2 * (lines.length - 1));
+      return [Math.min(it.x, start), Math.min(it.y, bottom), Math.max(it.x + it.w, start + width), Math.max(it.y + it.h, base + size * 0.8)];
+    }
     case "text": {
       const size = it.size ?? 14;
       const lines = it.text.split("\n");
@@ -96,16 +133,20 @@ export function bounds(it: EditItem): [number, number, number, number] {
 
 export function moveItem(it: Item, dx: number, dy: number): Item {
   if (it.type === "ink") return { ...it, paths: it.paths.map((p) => p.map((v, i) => v + (i % 2 === 0 ? dx : dy))) };
+  // The old text stays where it was; only its replacement moves.
+  if (it.type === "replace") return { ...it, start: (it.start ?? it.x) + dx, baseline: (it.baseline ?? it.y) + dy };
   return { ...it, x: it.x + dx, y: it.y + dy };
 }
 
 /** The `edit` tool's options for this document. */
-export function toOps(doc: Doc, sourceCount: number): EditOps {
+export function toOps(doc: Doc, sourceCount: number, fallbackFonts: FontRef[] = []): EditOps {
   const ops: EditOps = {};
   if (doc.blanks.length) ops.blanks = doc.blanks;
-  if (doc.items.length) ops.items = doc.items.map(({ id: _id, ...it }) => it as EditItem);
+  if (doc.items.length) ops.items = doc.items.map(({ id: _id, look: _look, run: _run, ...it }) => it as EditItem);
   if (Object.keys(doc.fields).length) ops.fields = doc.fields;
   if (doc.flattenFields) ops.flattenFields = true;
+  if (doc.redaction === "flatten" && doc.items.some((i) => i.type === "redact")) ops.redaction = "flatten";
+  if (fallbackFonts.length) ops.fallbackFonts = fallbackFonts;
   const unchanged = doc.pages.length === sourceCount && doc.pages.every((p, i) => p.src === i && p.rotate % 360 === 0);
   if (!unchanged) ops.order = doc.pages.map((p) => (p.rotate % 360 ? { page: p.src, rotate: p.rotate % 360 } : { page: p.src }));
   return ops;

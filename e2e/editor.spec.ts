@@ -49,6 +49,13 @@ async function save(page: Page): Promise<string> {
   return path;
 }
 
+/** Whether `needle`'s characters appear in `hay` in the same order. */
+function subsequence(hay: string, needle: string): boolean {
+  let i = 0;
+  for (const c of hay) if (c === needle[i]) i++;
+  return i === needle.length;
+}
+
 const text = (pdf: string) => execFileSync(cli[0]!, [...cli.slice(1), "to-text", pdf, "--no-ocr", "--page-breaks", "-o", "-"]).toString();
 /** The PDF with object streams unpacked, so dictionaries can be searched. */
 const qdf = (pdf: string) => execFileSync("qpdf", ["--qdf", "--object-streams=disable", pdf, "-"]).toString("latin1");
@@ -57,7 +64,7 @@ test("text, whiteout, highlight, note, signature and page order in one save", as
   const w = await watch(page);
   await open(page, "text-3.pdf");
 
-  await page.getByRole("button", { name: "Text", exact: true }).click();
+  await page.getByRole("button", { name: "Add text" }).click();
   const p = await at(page, 1, 0.12, 0.55);
   await page.mouse.click(p.x, p.y);
   await page.getByRole("textbox", { name: "Text" }).fill("Signed by Ada");
@@ -105,10 +112,11 @@ test("text, whiteout, highlight, note, signature and page order in one save", as
     .split("\f")
     .map((t) => t.replace(/\s+/g, ""));
   expect(pages).toHaveLength(4);
+  // Turned 90°, the page's lines come out interleaved: the added text is there in order.
+  expect(subsequence(pages[0]!, "SignedbyAda")).toBe(true);
   expect(pages[1]).toContain("Page3");
   expect(pages[2]).toContain("Page2");
   const raw = qdf(out);
-  expect(raw).toContain("(Signed by Ada) Tj");
   expect(raw).toContain("/Subtype /Highlight");
   expect(raw).toContain("/Subtype /Text");
   expect(raw).toContain("/Rotate 90");
@@ -128,12 +136,77 @@ test("redaction removes the text under the box for good", async ({ page }) => {
   await open(page, "text-3.pdf");
   await page.getByRole("button", { name: "Redact" }).click();
   await dragOn(page, 1, [0.02, 0.02], [0.98, 0.4]);
-  await expect(page.locator(".ed-hint")).toContainText("1 redaction");
+  await expect(page.locator(".ed-redaction")).toContainText("1 redaction");
   const out = await save(page);
   await expect(page.locator(".ed-result")).toContainText("redacted page 1");
   const pages = text(out).split("\f");
   expect(pages[0]).not.toContain("Page 1");
   expect(pages[1]).toContain("Page 2");
+});
+
+test("redaction keeps the rest of the page as text", async ({ page }) => {
+  const w = await watch(page);
+  await open(page, "text-3.pdf");
+  await page.getByRole("button", { name: "Redact" }).click();
+  // Over "The quick brown" (body line at y = 702 of 792, from x = 72).
+  await dragOn(page, 1, [0.11, 0.105], [0.32, 0.12]);
+  const out = await save(page);
+  await expect(page.locator(".ed-result")).toContainText("redacted page 1");
+  await expect(page.locator(".ed-result")).not.toContainText("turned into images");
+  const first = text(out).split("\f")[0]!;
+  expect(first).not.toContain("quick");
+  expect(first).toContain("Page 1");
+  expect(first).toContain("lazy dog");
+  await w.assertClean();
+});
+
+test("existing text is changed in place, in its own font", async ({ page }) => {
+  const w = await watch(page);
+  await open(page, "text-3.pdf");
+  await page.getByRole("button", { name: "Edit text" }).click();
+  // "Page 1": 24 pt Helvetica on the baseline at y = 720, from x = 72.
+  const p = await at(page, 1, 0.15, (792 - 728) / 792);
+  await page.mouse.click(p.x, p.y);
+  const line = page.getByRole("textbox", { name: "Edit this line" });
+  await expect(line).toHaveValue("Page 1");
+  await line.fill("Première page");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".ed-replace text")).toHaveText("Première page");
+  await expect(page.getByLabel("Font")).toHaveValue("auto");
+  const out = await save(page);
+  const first = text(out).split("\f")[0]!;
+  expect(first).toContain("Première page");
+  expect(first).not.toContain("Page 1");
+  // Helvetica had every letter: nothing new was embedded.
+  expect(qdf(out)).not.toContain("/FontFile2");
+  await w.assertClean();
+});
+
+test("text in any script, and a font asked for when none has the characters", async ({ page }) => {
+  await open(page, "text-3.pdf");
+  await page.getByRole("button", { name: "Add text" }).click();
+  const p = await at(page, 1, 0.12, 0.6);
+  await page.mouse.click(p.x, p.y);
+  await page.getByRole("textbox", { name: "Text" }).fill("Привет — Ωμέγα — 日本");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Save PDF" }).click();
+  const alert = page.locator(".ed-missing");
+  await expect(alert).toContainText("日本", { timeout: 90_000 });
+  // A font without those characters is accepted, and the editor asks again.
+  await alert.getByLabel("Font file").setInputFiles({
+    name: "LiberationMono-Regular.ttf",
+    mimeType: "font/ttf",
+    buffer: await readFile(new URL("../models/fonts/LiberationMono-Regular.ttf", import.meta.url)),
+  });
+  await expect(page.locator(".ed-fonts")).toContainText("LiberationMono-Regular.ttf");
+  await expect(page.locator(".ed-missing")).toContainText("日本", { timeout: 90_000 });
+  // Without the Japanese, it saves.
+  await page.getByRole("button", { name: "Select", exact: true }).click();
+  await page.locator(".ed-text").dblclick();
+  await page.getByRole("textbox", { name: "Text" }).fill("Привет — Ωμέγα");
+  await page.keyboard.press("Escape");
+  const out = await save(page);
+  expect(text(out).split("\f")[0]).toContain("Привет — Ωμέγα");
 });
 
 test("from your files to the editor and back", async ({ page }) => {

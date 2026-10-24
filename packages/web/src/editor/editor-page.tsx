@@ -1,4 +1,4 @@
-import { EngineError, outputName, type EditReport, type FormField } from "@pdfvault/engine";
+import { EngineError, isFontFile, missingCharacters, outputName, type EditReport, type FormField, type TextRun } from "@pdfvault/engine";
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { download, type InFile } from "../action-panel.tsx";
 import { Icon } from "../icons.tsx";
@@ -7,7 +7,8 @@ import { coreReport, runJob, warmUp } from "../runner.ts";
 import { Drop } from "../tool-page.tsx";
 import { vault } from "../vault.ts";
 import { workspace } from "../workspace.ts";
-import { initialDoc, sources, toOps, useHistory, moveItem, type Item, type SrcPage, type StampImage, type ToolName } from "./model.ts";
+import { canQueryLocalFonts, findLocalFont, type ExtraFont, type Family } from "./fonts.ts";
+import { initialDoc, sources, styleOf, toOps, useHistory, moveItem, type Item, type SrcPage, type StampImage, type ToolName } from "./model.ts";
 import { PageCanvas, type Style } from "./page-canvas.tsx";
 import { ImagePicker } from "./signature-pad.tsx";
 import { Thumbs } from "./thumbs.tsx";
@@ -25,23 +26,41 @@ interface Info {
 
 const TOOLS: { id: ToolName; label: string; icon: string; hint: string }[] = [
   { id: "select", label: "Select", icon: "cursor", hint: "Select, move and resize what you added. Double-click text to change it." },
-  { id: "text", label: "Text", icon: "text", hint: "Click where the text should start, then type." },
-  { id: "whiteout", label: "Whiteout", icon: "whiteout", hint: "Drag over what should disappear behind white. Add text on top to replace it." },
+  {
+    id: "edittext",
+    label: "Edit text",
+    icon: "edittext",
+    hint: "Click a line of the document's text to change it. It keeps its own font when that font has the letters; empty the line to remove it.",
+  },
+  { id: "text", label: "Add text", icon: "text", hint: "Click where the text should start, then type. Any language works." },
+  { id: "whiteout", label: "Whiteout", icon: "whiteout", hint: "Drag over what should disappear behind white." },
   { id: "highlight", label: "Highlight", icon: "highlight", hint: "Drag over a passage. Highlights are real comments other PDF apps can edit." },
   { id: "ink", label: "Draw", icon: "pen", hint: "Draw freehand with a mouse, a finger or a pen." },
   { id: "rect", label: "Box", icon: "square", hint: "Drag to draw a rectangle outline." },
   { id: "note", label: "Note", icon: "note", hint: "Click to pin a comment. It stays editable in other PDF apps." },
   { id: "image", label: "Sign / image", icon: "signature", hint: "Click on a page to place the signature or image." },
-  { id: "redact", label: "Redact", icon: "redact", hint: "Drag over what must be removed for good. Redacted pages become images when saved." },
+  {
+    id: "redact",
+    label: "Redact",
+    icon: "redact",
+    hint: "Drag over what must go for good: the text, images and drawings under the box are deleted from the file, the rest of the page stays as it is.",
+  },
 ];
 
+const base = { size: 14, bold: false, italic: false, family: "sans" as Family, lineWidth: 2 };
 const DEFAULT_STYLE: Record<string, Style> = {
-  text: { color: "#111111", size: 14, bold: false, lineWidth: 2 },
-  ink: { color: "#1a2b6d", size: 14, bold: false, lineWidth: 2 },
-  rect: { color: "#d93025", size: 14, bold: false, lineWidth: 2 },
-  highlight: { color: "#ffe14d", size: 14, bold: false, lineWidth: 2 },
-  note: { color: "#f5c518", size: 14, bold: false, lineWidth: 2 },
+  text: { ...base, color: "#111111" },
+  ink: { ...base, color: "#1a2b6d" },
+  rect: { ...base, color: "#d93025" },
+  highlight: { ...base, color: "#ffe14d" },
+  note: { ...base, color: "#f5c518" },
 };
+
+const FAMILIES: { id: Family; label: string }[] = [
+  { id: "sans", label: "Sans (Arial)" },
+  { id: "serif", label: "Serif (Times)" },
+  { id: "mono", label: "Mono (Courier)" },
+];
 
 const ZOOMS = [50, 75, 100, 125, 150, 200];
 
@@ -53,6 +72,9 @@ export function EditorPage() {
   });
   const [pages, setPages] = useState<SrcPage[] | null>(null);
   const [fields, setFields] = useState<FormField[]>([]);
+  const [runs, setRuns] = useState<TextRun[]>([]);
+  const [extraFonts, setExtraFonts] = useState<ExtraFont[]>([]);
+  const [missing, setMissing] = useState<string | null>(null);
   const [needsPassword, setNeedsPassword] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +126,11 @@ export function EditorPage() {
         return;
       }
       const form = await coreReport<{ fields: FormField[] }>("form-fields", f.bytes, opts);
+      // The page's own text, for Edit text, read while the pages render.
+      const lines = coreReport<{ runs: TextRun[] }>("text-runs", f.bytes, opts).then(
+        (r) => r.runs,
+        () => [] as TextRun[],
+      );
       // Sharp on high-density screens without rendering huge bitmaps.
       const dpi = Math.round(96 * Math.min(window.devicePixelRatio || 1, 2));
       const r = await runJob("pdf2img", [f.bytes], { format: "jpeg", dpi, quality: 82, ...opts }, ["render"], (label, fraction) =>
@@ -117,6 +144,7 @@ export function EditorPage() {
       });
       setFile({ ...f, password: opts.password });
       setFields(form.fields);
+      setRuns(await lines);
       setPages(srcPages);
       reset(initialDoc(srcPages.length));
       setSelected(null);
@@ -155,22 +183,36 @@ export function EditorPage() {
 
   const srcs = useMemo(() => (pages ? sources(pages, doc) : []), [pages, doc]);
   const scale = fit * (zoom / 100);
-  const styleKey = tool === "whiteout" || tool === "redact" || tool === "select" || tool === "image" ? null : tool;
+  const styleKey = tool === "whiteout" || tool === "redact" || tool === "select" || tool === "image" || tool === "edittext" ? null : tool;
   const selectedItem = doc.items.find((i) => i.id === selected) ?? null;
-  const styleTarget = selectedItem && tool === "select" ? (selectedItem.type === "rect" && selectedItem.stroke ? "rect" : selectedItem.type) : styleKey;
+  const canStyle = selectedItem && (tool === "select" || (tool === "edittext" && selectedItem.type === "replace"));
+  const styleTarget = canStyle ? (selectedItem.type === "rect" && selectedItem.stroke ? "rect" : selectedItem.type) : styleKey;
   const style = styles[styleTarget ?? "text"] ?? DEFAULT_STYLE.text!;
+  // What the text controls show: the selected text's own values, else the tool's.
+  const typed = selectedItem && (selectedItem.type === "text" || selectedItem.type === "replace") && canStyle ? selectedItem : null;
+  const shown = typed ? { ...styleOf(typed), size: typed.size ?? style.size, color: typed.color ?? style.color } : style;
   const redactions = doc.items.filter((i) => i.type === "redact").length;
   const dirty = history.canUndo;
 
-  const setStyle = (patch: Partial<Style>) => {
+  const setStyle = (patch: Partial<Style> & { auto?: boolean }) => {
     if (!styleTarget) return;
-    setStyles((s) => ({ ...s, [styleTarget]: { ...style, ...patch } }));
-    if (selectedItem && tool === "select") {
+    if (styleTarget !== "replace") setStyles((s) => ({ ...s, [styleTarget]: { ...style, ...patch } }));
+    if (selectedItem && canStyle) {
       commit((d) => ({
         ...d,
         items: d.items.map((it): Item => {
           if (it.id !== selectedItem.id) return it;
-          if (it.type === "text") return { ...it, color: patch.color ?? it.color, size: patch.size ?? it.size, bold: patch.bold ?? it.bold };
+          if (it.type === "text")
+            return { ...it, color: patch.color ?? it.color, size: patch.size ?? it.size, bold: patch.bold ?? it.bold, italic: patch.italic ?? it.italic, font: patch.family ?? it.font };
+          if (it.type === "replace")
+            return {
+              ...it,
+              color: patch.color ?? it.color,
+              size: patch.size ?? it.size,
+              bold: patch.bold ?? it.bold,
+              italic: patch.italic ?? it.italic,
+              font: patch.auto ? "auto" : (patch.family ?? it.font),
+            };
           if (it.type === "rect" && it.stroke) return { ...it, stroke: patch.color ?? it.stroke, lineWidth: patch.lineWidth ?? it.lineWidth };
           if (it.type === "ink") return { ...it, color: patch.color ?? it.color, lineWidth: patch.lineWidth ?? it.lineWidth };
           if (it.type === "highlight" || it.type === "note") return { ...it, color: patch.color ?? it.color };
@@ -230,16 +272,19 @@ export function EditorPage() {
     return () => removeEventListener("beforeunload", warn);
   }, [dirty, result]);
 
-  const save = async () => {
+  const save = async (fonts: ExtraFont[] = extraFonts) => {
     if (!file || !pages) return;
     setEditing(null);
     setError(null);
+    setMissing(null);
     abort.current = new AbortController();
     try {
-      const ops = toOps(doc, pages.length);
+      // Fonts the user added come after the images, tried for what the others lack.
+      const fallbacks = fonts.map((f, i) => ({ file: images.length + i, name: f.postscriptName }));
+      const ops = toOps(doc, pages.length, fallbacks);
       const r = await runJob(
         "edit",
-        [file.bytes, ...images.map((i) => i.bytes)],
+        [file.bytes, ...images.map((i) => i.bytes), ...fonts.map((f) => f.bytes)],
         { ops: JSON.stringify(ops), password: file.password },
         redactions ? ["render"] : [],
         (label, fraction) => setProgress(fraction === null ? label : `${label} (${Math.round(fraction * 100)}%)`),
@@ -250,9 +295,27 @@ export function EditorPage() {
       setSaved(null);
     } catch (e) {
       const err = e instanceof EngineError ? e : new EngineError("internal", String(e));
-      if (err.message !== "cancelled") setError(err.message);
+      const chars = missingCharacters(err);
+      if (chars !== null) setMissing(chars);
+      else if (err.message !== "cancelled") setError(err.message);
     } finally {
       setProgress(null);
+    }
+  };
+
+  const addFont = (f: ExtraFont) => {
+    const next = [...extraFonts, f];
+    setExtraFonts(next);
+    void save(next);
+  };
+
+  const useDeviceFont = async () => {
+    try {
+      const f = await findLocalFont(missing ?? "");
+      if (f) addFont(f);
+      else setError("No font on this device seems to have these characters. Choose a font file instead.");
+    } catch {
+      setError("The browser did not give access to this device's fonts. Choose a font file instead.");
     }
   };
 
@@ -336,17 +399,39 @@ export function EditorPage() {
               {styleTarget && styleTarget !== "image" && styleTarget !== "redact" ? (
                 <label className="ed-color">
                   <span>Color</span>
-                  <input type="color" value={style.color} onChange={(e) => setStyle({ color: e.currentTarget.value })} aria-label="Color" />
+                  <input type="color" value={shown.color} onChange={(e) => setStyle({ color: e.currentTarget.value })} aria-label="Color" />
                 </label>
               ) : null}
-              {styleTarget === "text" ? (
+              {styleTarget === "text" || styleTarget === "replace" ? (
                 <>
+                  <label className="ed-font">
+                    <span className="sr-only">Font</span>
+                    <select
+                      aria-label="Font"
+                      value={typed?.type === "replace" && typed.font === "auto" ? "auto" : shown.family}
+                      onChange={(e) => {
+                        const v = e.currentTarget.value;
+                        if (v === "auto") setStyle({ auto: true });
+                        else setStyle({ family: v as Family });
+                      }}
+                    >
+                      {styleTarget === "replace" ? <option value="auto">Original font{typed?.look?.fontName ? ` (${typed.look.fontName})` : ""}</option> : null}
+                      {FAMILIES.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <label className="ed-num">
                     <span>Size</span>
-                    <input type="number" min={4} max={300} value={selectedItem?.type === "text" ? (selectedItem.size ?? 14) : style.size} onChange={(e) => setStyle({ size: Number(e.currentTarget.value) || 14 })} aria-label="Text size" />
+                    <input type="number" min={4} max={300} step={0.5} value={Math.round(shown.size * 10) / 10} onChange={(e) => setStyle({ size: Number(e.currentTarget.value) || 14 })} aria-label="Text size" />
                   </label>
-                  <button type="button" className="ed-tool" aria-pressed={selectedItem?.type === "text" ? Boolean(selectedItem.bold) : style.bold} onClick={() => setStyle({ bold: !(selectedItem?.type === "text" ? selectedItem.bold : style.bold) })} aria-label="Bold">
+                  <button type="button" className="ed-tool" aria-pressed={shown.bold} onClick={() => setStyle({ bold: !shown.bold })} aria-label="Bold">
                     <strong>B</strong>
+                  </button>
+                  <button type="button" className="ed-tool" aria-pressed={shown.italic} onClick={() => setStyle({ italic: !shown.italic })} aria-label="Italic">
+                    <em>I</em>
                   </button>
                 </>
               ) : null}
@@ -356,7 +441,7 @@ export function EditorPage() {
                   <input type="number" min={0.5} max={20} step={0.5} value={style.lineWidth} onChange={(e) => setStyle({ lineWidth: Number(e.currentTarget.value) || 2 })} aria-label="Line width" />
                 </label>
               ) : null}
-              {selectedItem && tool === "select" ? (
+              {selectedItem && canStyle ? (
                 <button
                   type="button"
                   className="icon"
@@ -394,8 +479,53 @@ export function EditorPage() {
           </div>
           <p className="note ed-hint" aria-live="polite">
             {hint}
-            {redactions ? ` ${redactions} redaction${redactions > 1 ? "s" : ""}: those pages will be flattened to images, their text removed.` : ""}
           </p>
+
+          {missing !== null ? (
+            <div className="ed-missing" role="alert">
+              <p>
+                No font the editor has can write {missing ? <strong>{missing}</strong> : "some of these characters"}. Add a font that has them and the PDF is saved again.
+              </p>
+              <div className="actions">
+                {canQueryLocalFonts() ? (
+                  <button type="button" className="primary small" onClick={() => void useDeviceFont()}>
+                    Use a font from this device
+                  </button>
+                ) : null}
+                <label className="secondary small file-button">
+                  Choose a font file
+                  <input
+                    type="file"
+                    accept=".ttf,.otf,.ttc,font/ttf,font/otf,font/collection"
+                    aria-label="Font file"
+                    onChange={(e) => {
+                      const f = e.currentTarget.files?.[0];
+                      e.currentTarget.value = "";
+                      if (!f) return;
+                      void f.arrayBuffer().then((b) => {
+                        const bytes = new Uint8Array(b);
+                        if (!isFontFile(bytes)) setError(`${f.name} is not a TrueType or OpenType font (.ttf, .otf, .ttc).`);
+                        else addFont({ name: f.name, bytes });
+                      });
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+          ) : null}
+          {extraFonts.length ? (
+            <p className="note ed-fonts">
+              Added fonts:{" "}
+              {extraFonts.map((f, i) => (
+                <span key={i} className="chip">
+                  {f.name}
+                  <button type="button" className="icon" aria-label={`Remove ${f.name}`} onClick={() => setExtraFonts((all) => all.filter((_, j) => j !== i))}>
+                    <Icon name="x" />
+                  </button>
+                </span>
+              ))}
+            </p>
+          ) : null}
 
           {result ? (
             <div className="ed-result" role="status">
@@ -403,6 +533,10 @@ export function EditorPage() {
               <span className="size">
                 {bytes(result.bytes.length)} · {result.report.pages} page{result.report.pages > 1 ? "s" : ""}
                 {result.report.redactedPages.length ? ` · redacted page${result.report.redactedPages.length > 1 ? "s" : ""} ${result.report.redactedPages.join(", ")}` : ""}
+                {result.report.flattenedPages.length
+                  ? ` (page${result.report.flattenedPages.length > 1 ? "s" : ""} ${result.report.flattenedPages.join(", ")} turned into images to be sure)`
+                  : ""}
+                {result.report.covered ? ` · ${result.report.covered} line${result.report.covered > 1 ? "s" : ""} could only be covered, not removed` : ""}
               </span>
               <button type="button" className="primary small" onClick={() => download(result.name, result.bytes)}>
                 <Icon name="download" /> Download
@@ -453,6 +587,7 @@ export function EditorPage() {
                       scale={scale}
                       items={doc.items.filter((it) => it.page === pg.src)}
                       fields={fields.filter((f) => f.page === pg.src)}
+                      runs={runs.filter((r) => r.page === pg.src)}
                       values={doc.fields}
                       tool={tool}
                       style={style}
@@ -474,8 +609,28 @@ export function EditorPage() {
                   );
                 })}
               </section>
+              {/* Below the pages, so nothing above them moves while you draw. */}
+              {redactions ? (
+                <div className="ed-redaction" aria-live="polite">
+                  <p className="note">
+                    {redactions} redaction{redactions > 1 ? "s" : ""}:{" "}
+                    {doc.redaction === "flatten"
+                      ? "those pages become images when saved."
+                      : "what is under the boxes is deleted from the file; the rest of the page stays as it is, text included."}
+                  </p>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={doc.redaction === "flatten"}
+                      onChange={(e) => commit((d) => ({ ...d, redaction: e.currentTarget.checked ? "flatten" : "remove" }))}
+                    />
+                    <span>Turn redacted pages into images (strictest: nothing on them stays selectable)</span>
+                  </label>
+                </div>
+              ) : null}
               <p className="note viewer-hint">
-                Text uses Helvetica: Latin characters only. Existing text cannot be retyped; cover it with Whiteout, then add new text.
+                Changed text keeps its own font when that font has the letters; otherwise it is written in Liberation Sans, Serif or Mono, which match
+                Arial, Times and Courier. Any language works: for scripts those fonts lack, add a font from your device.
               </p>
             </div>
           </div>

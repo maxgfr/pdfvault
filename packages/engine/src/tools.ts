@@ -1,7 +1,8 @@
 // Every tool, declared once. The CLI derives its commands and flags from this
 // list and the site derives its forms, so both run identical code paths.
 
-import { parseEdits, redactions, type EditReport } from "./edit.ts";
+import { parseEdits, redactionBoxes, type EditReport } from "./edit.ts";
+import { isFontKey } from "./fonts.ts";
 import type { Engine, OcrLine, OutFile, RunResult } from "./engine.ts";
 import { EngineError } from "./errors.ts";
 
@@ -644,7 +645,7 @@ export const tools: Tool[] = [
   {
     id: "edit",
     title: "Edit PDF",
-    summary: "Add text, shapes, drawings, images and signatures; fill forms, comment, redact, reorder and rotate pages.",
+    summary: "Change existing text, add text, shapes, drawings, images and signatures; fill forms, comment, redact, reorder and rotate pages.",
     category: "edit",
     input: "pdf+images",
     aliases: ["annotate", "fill", "redact"],
@@ -655,30 +656,48 @@ export const tools: Tool[] = [
         label: "Edits (JSON)",
         required: true,
         placeholder: '{ "items": [{ "type": "text", "page": 0, "x": 72, "y": 720, "text": "Hello" }] }',
-        help: "Items, form values, blank pages and page order; images given after the PDF are image 0, 1… On the command line, @file.json reads a file.",
+        help: "Items, form values, blank pages and page order; images and font files given after the PDF are attachment 0, 1… On the command line, @file.json reads a file.",
       },
       password,
     ],
-    async run(engine, [pdf, ...images], o, progress) {
+    async run(engine, [pdf, ...attachments], o, progress) {
       const ops = parseEdits(required(o, "ops", "Edits"));
-      const boxes = redactions(ops.items);
-      const steps = 1 + (boxes.length ? 1 : 0) + (ops.order ? 1 : 0);
-      progress?.(0, steps, "Applying the edits");
-      const { order, redactDpi, ...core } = ops;
-      const edited = await engine.core<Omit<EditReport, "redactedPages">>("edit", [pdf!, ...images], { ...core, ...pw(o) });
+      const { order, redactDpi, ...edits } = ops;
+      const boxes = redactionBoxes(ops);
+      const steps = 2 + (boxes.length ? 1 : 0) + (order ? 1 : 0);
+      progress?.(0, steps, "Preparing the edits");
+      // Only the bundled fonts the text needs are loaded and passed along.
+      const plan = await engine.core<{ fonts: string[] }>("edit-plan", [pdf!], { ...edits, ...pw(o) });
+      const keys = plan.report.fonts.filter(isFontKey);
+      const fonts = await Promise.all(keys.map((k) => engine.font(k)));
+      const bundled = Object.fromEntries(keys.map((k, i) => [k, attachments.length + i]));
+      progress?.(1, steps, "Applying the edits");
+      type CoreReport = Omit<EditReport, "redactedPages" | "flattenedPages"> & { redactedPages: number[]; flatten: number[] };
+      const edited = await engine.core<CoreReport>("edit", [pdf!, ...attachments, ...fonts], { ...edits, bundled, ...pw(o) });
       let bytes = edited.files[0]!.bytes;
-      let redactedPages: number[] = [];
+      let flattenedPages: number[] = [];
       if (boxes.length) {
-        progress?.(1, steps, "Redacting");
-        const r = await engine.render<{ redactedPages: number[] }>("redact", [bytes], { pages: boxes, dpi: redactDpi ?? 150 });
-        bytes = r.files[0]!.bytes;
-        redactedPages = r.report.redactedPages;
+        // A second, independent reading of every redacted page; what it doubts becomes an image.
+        progress?.(2, steps, "Checking the redactions");
+        const checked = await engine.render<{ flattenedPages: number[] }>("redact-check", [bytes], {
+          pages: boxes,
+          flatten: edited.report.flatten,
+          dpi: redactDpi ?? 150,
+        });
+        bytes = checked.files[0]!.bytes;
+        flattenedPages = checked.report.flattenedPages;
       }
       if (order) {
         progress?.(steps - 1, steps, "Arranging the pages");
         bytes = (await engine.core("arrange", [bytes], { order: order.map((p) => ({ page: p.page, rotate: p.rotate ?? 0 })) })).files[0]!.bytes;
       }
-      const report: EditReport = { ...edited.report, pages: order?.length ?? edited.report.pages, redactedPages };
+      const { flatten: _, ...rest } = edited.report;
+      const report: EditReport = {
+        ...rest,
+        pages: order?.length ?? edited.report.pages,
+        redactedPages: boxes.map((b) => b.page + 1),
+        flattenedPages,
+      };
       return { files: [{ suffix: "edited", ext: "pdf", bytes }], report };
     },
   },

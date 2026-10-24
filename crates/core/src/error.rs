@@ -18,6 +18,9 @@ pub enum Error {
     Unsupported(String),
     #[error("image error: {0}")]
     Image(String),
+    /// Characters none of the given fonts can draw, in the order met.
+    #[error("no font has these characters: {0}")]
+    MissingGlyphs(String),
 }
 
 impl Error {
@@ -30,6 +33,7 @@ impl Error {
             Error::InvalidOption(_) => "invalid_option",
             Error::Unsupported(_) => "unsupported",
             Error::Image(_) => "image",
+            Error::MissingGlyphs(_) => "missing_glyphs",
         }
     }
 

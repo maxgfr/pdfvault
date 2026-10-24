@@ -643,13 +643,13 @@ fn color_space(doc: &Document, obj: &Object) -> Option<(Space, Option<Object>)> 
     }
 }
 
-struct Decoded {
-    px: Pixels,
+pub(crate) struct Decoded {
+    pub(crate) px: Pixels,
     /// Color space to write back for this many components, when worth keeping.
-    keep_space: Option<Object>,
+    pub(crate) keep_space: Option<Object>,
 }
 
-fn decode_image(doc: &Document, s: &Stream) -> std::result::Result<Decoded, String> {
+pub(crate) fn decode_image(doc: &Document, s: &Stream) -> std::result::Result<Decoded, String> {
     let d = &s.dict;
     if d.get(b"ImageMask")
         .and_then(Object::as_bool)
@@ -859,7 +859,7 @@ fn strip_ascii_layers(s: &mut Stream) -> bool {
     true
 }
 
-fn base_dict(old: &Dictionary, w: u32, h: u32) -> Dictionary {
+pub(crate) fn base_dict(old: &Dictionary, w: u32, h: u32) -> Dictionary {
     let mut d = dictionary! {
         "Type" => "XObject", "Subtype" => "Image", "Width" => w as i64, "Height" => h as i64,
     };
@@ -882,7 +882,7 @@ fn base_dict(old: &Dictionary, w: u32, h: u32) -> Dictionary {
 }
 
 /// Encode pixels lossless: a packed palette when ≤256 colors, else 8-bit with PNG predictors.
-fn encode_lossless(
+pub(crate) fn encode_lossless(
     px: &Pixels,
     keep_space: Option<&Object>,
 ) -> (Vec<u8>, Dictionary, &'static str) {
@@ -1222,7 +1222,7 @@ pub fn replace_pages_with_images(
 }
 
 /// Drop form fields whose widgets were removed, so their values go too.
-fn prune_fields(doc: &mut Document, dropped: &HashSet<ObjectId>) {
+pub(crate) fn prune_fields(doc: &mut Document, dropped: &HashSet<ObjectId>) {
     fn keep(doc: &mut Document, id: ObjectId, dropped: &HashSet<ObjectId>, depth: usize) -> bool {
         if dropped.contains(&id) || depth > 32 {
             return false;

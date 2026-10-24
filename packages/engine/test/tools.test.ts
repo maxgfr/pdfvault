@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { EngineError, toolById, tools, withDefaults, type Options, type RunResult } from "../src/index.ts";
+import { EngineError, missingCharacters, toolById, tools, withDefaults, type EditOps, type Options, type RunResult, type TextRun } from "../src/index.ts";
 import type { CompressReport } from "../src/reports.ts";
 import { engine, fixture } from "./loader.ts";
 
@@ -207,6 +207,46 @@ describe("edit", () => {
     await expect(run("edit", [await fixture("text-3.pdf")], { ops: JSON.stringify({ items: [{ type: "text", page: 9, text: "x" }] }) })).rejects.toMatchObject({
       code: "invalid_option",
     });
+  });
+
+  test("editor: change existing text, write any script, redact without flattening", async () => {
+    const pdf = await fixture("text-3.pdf");
+    const lines = async (bytes: Uint8Array) =>
+      (await engine.core<{ runs: TextRun[] }>("text-runs", [bytes], { pages: "1" })).report.runs;
+    const before = await lines(pdf);
+    const body = before.find((r) => r.text.startsWith("The quick"))!;
+    const title = before.find((r) => r.text === "Page 1")!;
+    expect(body).toMatchObject({ editable: true, family: "sans", bold: false });
+    const ops: EditOps = {
+      items: [
+        // Same font: Helvetica has every letter of the new text.
+        { type: "replace", page: 0, x: body.x, y: body.y, w: body.w, h: body.h, text: "Le vif renard brun, été 2026" },
+        // Cyrillic is beyond Helvetica: the bundled Liberation Sans Bold takes over.
+        { type: "replace", page: 0, x: title.x, y: title.y, w: title.w, h: title.h, text: "Страница 1", bold: true },
+        { type: "text", page: 1, x: 72, y: 500, text: "Ωμέγα — 価格 n'est pas là", font: "serif" },
+      ],
+    };
+    // No font here has the Japanese characters.
+    await expect(run("edit", [pdf], { ops: JSON.stringify(ops) })).rejects.toMatchObject({ code: "missing_glyphs" });
+    try {
+      await run("edit", [pdf], { ops: JSON.stringify(ops) });
+    } catch (e) {
+      expect(missingCharacters(e)).toBe("価格");
+    }
+    (ops.items![2] as { text: string }).text = "Ωμέγα — Привет";
+    ops.items!.push({ type: "redact", page: 2, x: body.x, y: body.y, w: body.w / 2, h: body.h });
+    const r = await run("edit", [pdf], { ops: JSON.stringify(ops) });
+    const out = firstPdf(r);
+    await qpdfCheck(out);
+    expect(r.report).toMatchObject({ replaced: 2, sameFont: 1, covered: 0, redactedPages: [3], flattenedPages: [] });
+    const after = await lines(out);
+    expect(after.map((l) => l.text)).toEqual(expect.arrayContaining(["Le vif renard brun, été 2026", "Страница 1"]));
+    expect(after.find((l) => l.text === "Страница 1")).toMatchObject({ bold: true, size: title.size });
+    const page2 = (await engine.core<{ runs: TextRun[] }>("text-runs", [out], { pages: "2" })).report.runs;
+    expect(page2.map((l) => l.text)).toContain("Ωμέγα — Привет");
+    const page3 = (await engine.core<{ runs: TextRun[] }>("text-runs", [out], { pages: "3" })).report.runs.map((l) => l.text).join(" ");
+    expect(page3).not.toContain("quick");
+    expect(page3).toContain("lazy dog");
   });
 });
 

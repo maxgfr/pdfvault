@@ -138,7 +138,15 @@ describe("running", () => {
     expect(JSON.parse(r.out).results[0]).toMatchObject({ ok: true, report: { drawn: 1, pages: 2 } });
     expect(cli(["edit", "text-3.pdf", "--ops", "@missing.json"]).code).toBe(2);
     expect(cli(["edit", "photo.jpg", "--ops", "{}"]).err).toContain("is not a PDF");
-    expect(cli(["edit", "--help"]).out).toContain("pdfvault edit <pdf> [image...]");
+    expect(cli(["edit", "--help"]).out).toContain("pdfvault edit <pdf> [image or font file...]");
+  });
+
+  test("edit writes text with a font file given after the PDF", async () => {
+    const font = `${root}models/fonts/LiberationMono-Regular.ttf`;
+    const ops = { items: [{ type: "text", page: 0, x: 72, y: 500, text: "Привет, мир", fontFile: { file: 0 } }] };
+    const r = cli(["edit", "text-3.pdf", font, "--ops", JSON.stringify(ops), "-o", "mono.pdf", "--json"]);
+    expect(r.code).toBe(0);
+    expect(cli(["to-text", "mono.pdf", "--no-ocr", "-o", "-"]).out).toContain("Привет, мир");
   });
 });
 

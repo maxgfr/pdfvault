@@ -38,6 +38,10 @@ export function About() {
         <li>The “extreme” compression level turns every page into an image: text is no longer selectable.</li>
         <li>Fonts are not subset, so text-heavy PDFs shrink less than image-heavy ones.</li>
         <li>Visual signatures are images, not cryptographic signatures.</li>
+        <li>
+          The editor writes text with the Liberation fonts (SIL Open Font License 1.1, <a href="fonts/LICENSE.txt">licence</a>) when a
+          document's own font lacks the letters. It changes text line by line, without reflowing paragraphs.
+        </li>
       </ul>
       <p>
         <a href="https://github.com/maxgfr/pdfvault" rel="noopener noreferrer">

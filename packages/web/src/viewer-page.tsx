@@ -17,6 +17,12 @@ const isPdf = (b: Uint8Array) => new TextDecoder().decode(b.subarray(0, 1024)).i
 
 /** Read-only viewer: pages are rasterized by the wasm renderer, like every other tool, so nothing leaves the tab. */
 export function ViewerPage() {
+  // A file of yours opened from its card: shown right away, edited in place.
+  const [from] = useState(() => {
+    const f = workspace.viewing ? workspace.get(workspace.viewing) : undefined;
+    workspace.viewing = null;
+    return f && f.kind === "pdf" ? f : undefined;
+  });
   const [doc, setDoc] = useState<InFile | null>(null);
   const [pages, setPages] = useState<Page[]>([]);
   const [progress, setProgress] = useState<{ label: string; fraction: number | null } | null>(null);
@@ -31,7 +37,12 @@ export function ViewerPage() {
   useEffect(() => {
     warmUp("core");
     warmUp("render");
+    if (from) {
+      setPassword(from.password ?? "");
+      void open({ key: from.key, name: from.name, bytes: from.bytes, password: from.password }, from.password);
+    }
     return () => abort.current?.abort();
+    // Only the file the page was opened with.
   }, []);
   useEffect(() => () => pages.forEach((p) => URL.revokeObjectURL(p.url)), [pages]);
 
@@ -94,7 +105,7 @@ export function ViewerPage() {
     >
       <header className="tool-head">
         <a href="#/" className="back">
-          <Icon name="back" /> All tools
+          <Icon name="back" /> {from ? "Your files" : "All tools"}
         </a>
         <h1>PDF viewer</h1>
         <p>Drop a PDF to read it here. Pages are drawn in this tab; the file is never uploaded.</p>
@@ -121,7 +132,8 @@ export function ViewerPage() {
             className="primary small"
             onClick={() => {
               // The editor opens files from your files: put this one there first.
-              const [f] = workspace.add([{ name: doc.name, bytes: doc.bytes, password }]);
+              const known = workspace.get(doc.key);
+              const f = known ?? workspace.add([{ name: doc.name, bytes: doc.bytes, password }])[0];
               workspace.editing = f?.key ?? null;
               location.hash = "#/edit";
             }}

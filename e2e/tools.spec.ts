@@ -54,8 +54,8 @@ const magic: Record<string, (b: Uint8Array) => boolean> = {
 test("every tool in the registry is covered", async ({ page }) => {
   await page.goto("./");
   const ids = await page.locator(".card").evaluateAll((as) => as.map((a) => (a as HTMLAnchorElement).hash.slice(2)));
-  // The editor has its own page and its own spec (editor.spec.ts).
-  expect(ids.sort()).toEqual([...cases.map((c) => c.id), "edit"].sort());
+  // The editor and the viewer have their own pages and specs.
+  expect(ids.sort()).toEqual([...cases.map((c) => c.id), "edit", "view"].sort());
 });
 
 for (const c of cases) {

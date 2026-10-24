@@ -9,7 +9,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pdfvault-core.workspace = true
+pdfvault-core = { workspace = true, features = ["typeset"] }
 wasm-bindgen.workspace = true
 js-sys.workspace = true
 

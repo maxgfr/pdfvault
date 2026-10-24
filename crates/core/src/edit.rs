@@ -1,6 +1,6 @@
-//! The PDF editor's single write: append blank pages, fill form fields, draw
-//! text, shapes, freehand ink and images onto pages, and add comments (note
-//! and highlight annotations).
+//! The PDF editor's single write: append blank pages, fill form fields,
+//! change existing text, redact, draw text, shapes, freehand ink and images
+//! onto pages, and add comments (note and highlight annotations).
 //!
 //! Coordinates are in the page's visual space, like the image stamp: points,
 //! origin at the bottom-left of the page as it is displayed (after /Rotate).
@@ -8,18 +8,31 @@
 //! pages this call appends, so items stay on their page whatever order
 //! [`crate::pages::arrange`] puts the pages in afterwards.
 //!
-//! Redaction is not done here: it rasterizes pages, which needs the renderer
-//! (`pdfvault-render`'s `redact`). `redact` items are accepted and skipped so
-//! one item list can feed both steps.
+//! Content goes first: the glyphs a `replace` item rewrites and whatever lies
+//! under `redact` boxes are taken out of the page's content streams
+//! ([`crate::scrub`]); then everything is drawn; redaction boxes come last,
+//! on top. A page whose redaction cannot be done in the content with
+//! certainty is listed in [`EditReport::flatten`] for the renderer to turn
+//! into an image (`pdfvault-render`'s `edit` does that and double-checks the
+//! others).
+//!
+//! Text is written with embedded font subsets (feature `typeset`): the
+//! bundled Liberation fonts, or font files given as attachments. A `replace`
+//! item keeps the original font when it has every character.
 
 use crate::error::{Error, Result};
 use crate::forms::{self, FieldValue};
 use crate::images;
+use crate::interp::{self, Page};
 use crate::pdf::{self, n};
+use crate::pdffont::Family;
+use crate::redact;
+use crate::scrub::{self, Removal};
 use crate::stamp::{self, cm, parse_color};
+use crate::textedit;
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream, dictionary};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// First baseline of a text item sits this many font sizes below its top.
 pub const TEXT_ASCENT: f32 = 0.8;
@@ -27,6 +40,17 @@ pub const TEXT_ASCENT: f32 = 0.8;
 pub const TEXT_LINE: f32 = 1.2;
 /// Side of a note's icon, in points.
 pub const NOTE_SIZE: f32 = 20.0;
+
+#[derive(Debug, Deserialize, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Redaction {
+    /// Take what is under the boxes out of the content; the rest of the page
+    /// stays as it was, text included.
+    #[default]
+    Remove,
+    /// Turn every redacted page into an image.
+    Flatten,
+}
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -37,6 +61,23 @@ pub struct EditOptions {
     /// Burn the form into the pages once filled.
     pub flatten_fields: bool,
     pub items: Vec<Item>,
+    pub redaction: Redaction,
+    /// Resolution pages turned into images are rendered at (renderer only).
+    pub redact_dpi: Option<f32>,
+    /// Bundled fonts ("sans-regular", "serif-bold"…) by attachment index; the
+    /// engine fills this in from [`plan`].
+    pub bundled: BTreeMap<String, usize>,
+    /// Fonts tried in order for characters a text's own font lacks.
+    pub fallback_fonts: Vec<FontRef>,
+}
+
+/// A font file among the attachments; `name` picks a face in a collection.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct FontRef {
+    pub file: usize,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default, Clone)]
@@ -51,6 +92,7 @@ pub struct Blank {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Item {
     Text(TextItem),
+    Replace(ReplaceItem),
     Rect(RectItem),
     Ink(InkItem),
     Image(ImageItem),
@@ -63,6 +105,7 @@ impl Item {
     pub fn page(&self) -> usize {
         match self {
             Item::Text(i) => i.page,
+            Item::Replace(i) => i.page,
             Item::Rect(i) => i.page,
             Item::Ink(i) => i.page,
             Item::Image(i) => i.page,
@@ -72,7 +115,7 @@ impl Item {
     }
 }
 
-/// Lines of Helvetica. `x`, `y` is the top-left corner of the text box.
+/// Lines of text. `x`, `y` is the top-left corner of the text box.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase", default)]
 pub struct TextItem {
@@ -81,7 +124,12 @@ pub struct TextItem {
     pub y: f32,
     pub size: f32,
     pub color: String,
+    /// "sans", "serif" or "mono" (the bundled Liberation fonts).
+    pub font: String,
     pub bold: bool,
+    pub italic: bool,
+    /// A font file among the attachments, instead of `font`.
+    pub font_file: Option<FontRef>,
     pub text: String,
 }
 
@@ -93,9 +141,70 @@ impl Default for TextItem {
             y: 0.0,
             size: 14.0,
             color: "#000000".into(),
+            font: "sans".into(),
             bold: false,
+            italic: false,
+            font_file: None,
             text: String::new(),
         }
+    }
+}
+
+/// Existing text rewritten: the glyphs whose centre lies in the box (`x`,
+/// `y` its bottom-left corner) go, and `text` is written from `start` on
+/// `baseline`. Unset values come from the glyphs removed. With `find`
+/// instead of a box, the first line of the page containing it is rewritten
+/// with `find` replaced by `text`.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ReplaceItem {
+    pub page: usize,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub text: String,
+    pub find: Option<String>,
+    pub start: Option<f32>,
+    pub baseline: Option<f32>,
+    pub size: Option<f32>,
+    pub color: Option<String>,
+    /// "auto" (the original font when it has every character, else the
+    /// closest bundled one), "sans", "serif" or "mono".
+    pub font: String,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub font_file: Option<FontRef>,
+    /// Horizontal scaling, percent.
+    pub hscale: Option<f32>,
+}
+
+impl Default for ReplaceItem {
+    fn default() -> Self {
+        ReplaceItem {
+            page: 0,
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+            text: String::new(),
+            find: None,
+            start: None,
+            baseline: None,
+            size: None,
+            color: None,
+            font: "auto".into(),
+            bold: None,
+            italic: None,
+            font_file: None,
+            hscale: None,
+        }
+    }
+}
+
+impl ReplaceItem {
+    pub fn bounds(&self) -> [f32; 4] {
+        norm(self.x, self.y, self.w, self.h)
     }
 }
 
@@ -153,8 +262,8 @@ impl Default for InkItem {
     }
 }
 
-/// An image input drawn into a box; `image` counts the images after the PDF
-/// from 0. `x`, `y` is the bottom-left corner.
+/// An image attachment drawn into a box; `image` counts the attachments after
+/// the PDF from 0. `x`, `y` is the bottom-left corner.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ImageItem {
@@ -244,6 +353,22 @@ pub struct EditReport {
     pub fields: usize,
     pub drawn: usize,
     pub annotations: usize,
+    /// Lines of existing text rewritten, and how many kept their own font.
+    pub replaced: usize,
+    pub same_font: usize,
+    /// Rewritten lines whose old glyphs could not be taken out, only covered.
+    pub covered: usize,
+    /// Pages redacted in their content (1-based).
+    pub redacted_pages: Vec<usize>,
+    /// Pages left for the renderer to turn into images (0-based).
+    pub flatten: Vec<usize>,
+}
+
+/// Which bundled fonts an edit needs, so the caller can pass just those.
+#[derive(Debug, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EditPlan {
+    pub fonts: Vec<String>,
 }
 
 fn norm(x: f32, y: f32, w: f32, h: f32) -> [f32; 4] {
@@ -259,6 +384,14 @@ fn finite(values: &[f32]) -> Result<()> {
         Ok(())
     } else {
         Err(Error::option("coordinates must be finite numbers"))
+    }
+}
+
+fn check_size(size: f32) -> Result<()> {
+    if (1.0..=500.0).contains(&size) {
+        Ok(())
+    } else {
+        Err(Error::option("font size must be between 1 and 500"))
     }
 }
 
@@ -391,9 +524,305 @@ fn highlight_annot(
     }))
 }
 
-/// Apply `o` to the PDF in `inputs[0]`; `inputs[1..]` are the images items refer to.
+/// How a piece of text gets its font.
+#[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "typeset"), allow(dead_code))]
+enum Choice {
+    /// The page font that already draws the text being replaced, with the
+    /// codes for each line.
+    Original(usize, Vec<Vec<(u32, usize)>>),
+    Bundled(String),
+    File(FontRef),
+}
+
+fn text_choice(it: &TextItem) -> Result<Choice> {
+    if let Some(f) = &it.font_file {
+        return Ok(Choice::File(f.clone()));
+    }
+    let family = textedit::parse_family(&it.font).ok_or_else(|| {
+        Error::option(format!("unknown font '{}' (sans, serif or mono)", it.font))
+    })?;
+    Ok(Choice::Bundled(textedit::bundled_key(
+        family, it.bold, it.italic,
+    )))
+}
+
+/// A replace item with its box: given, or the line holding `find`.
+fn locate(page: &Page, index: usize, it: &ReplaceItem) -> Result<ReplaceItem> {
+    let Some(find) = it.find.as_deref().filter(|f| !f.is_empty()) else {
+        return Ok(it.clone());
+    };
+    let run = textedit::runs_of(page, index)
+        .into_iter()
+        .find(|r| r.editable && r.text.contains(find))
+        .ok_or_else(|| {
+            Error::option(format!("no line of page {} contains \"{find}\"", index + 1))
+        })?;
+    Ok(ReplaceItem {
+        x: run.x,
+        y: run.y,
+        w: run.w,
+        h: run.h,
+        text: run.text.replacen(find, &it.text, 1),
+        find: None,
+        start: it.start.or(Some(run.start)),
+        baseline: it.baseline.or(Some(run.baseline)),
+        ..it.clone()
+    })
+}
+
+/// The replace item placed, the glyphs it takes out, and the font it writes with.
+fn replace_choice(
+    page: &Page,
+    index: usize,
+    it: &ReplaceItem,
+) -> Result<(ReplaceItem, Vec<usize>, Choice)> {
+    let it = &locate(page, index, it)?;
+    let (glyphs, choice) = choose(page, it)?;
+    Ok((it.clone(), glyphs, choice))
+}
+
+fn choose(page: &Page, it: &ReplaceItem) -> Result<(Vec<usize>, Choice)> {
+    let glyphs = textedit::glyphs_in(page, it.bounds());
+    if let Some(f) = &it.font_file {
+        return Ok((glyphs, Choice::File(f.clone())));
+    }
+    let original = textedit::dominant_font(page, &glyphs);
+    let base = original.map(|f| &page.fonts[f]);
+    let style = |family: Family| {
+        Choice::Bundled(textedit::bundled_key(
+            family,
+            it.bold.unwrap_or(base.is_some_and(|b| b.bold)),
+            it.italic.unwrap_or(base.is_some_and(|b| b.italic)),
+        ))
+    };
+    if it.font != "auto" {
+        let family = textedit::parse_family(&it.font).ok_or_else(|| {
+            Error::option(format!(
+                "unknown font '{}' (auto, sans, serif or mono)",
+                it.font
+            ))
+        })?;
+        return Ok((glyphs, style(family)));
+    }
+    // The original font, unless the item asks for another weight or slant.
+    if let Some(f) = original {
+        let same_style = it.bold.is_none_or(|b| b == page.fonts[f].bold)
+            && it.italic.is_none_or(|i| i == page.fonts[f].italic);
+        let lines: Option<Vec<_>> = same_style
+            .then(|| {
+                it.text
+                    .lines()
+                    .map(|l| textedit::encode_with(page, f, l))
+                    .collect()
+            })
+            .flatten();
+        if let Some(lines) = lines {
+            return Ok((glyphs, Choice::Original(f, lines)));
+        }
+    }
+    Ok((
+        glyphs,
+        style(base.map(|b| b.family).unwrap_or(Family::Sans)),
+    ))
+}
+
+fn page_of(ids: &[ObjectId], p: usize) -> Result<ObjectId> {
+    ids.get(p).copied().ok_or_else(|| {
+        Error::option(format!(
+            "page {} does not exist ({} pages)",
+            p + 1,
+            ids.len()
+        ))
+    })
+}
+
+/// The bundled fonts `o` needs (to be passed as attachments, listed in
+/// [`EditOptions::bundled`]).
+pub fn plan(pdf_bytes: &[u8], o: &EditOptions) -> Result<EditPlan> {
+    let mut doc = pdf::load(pdf_bytes, o.password.as_deref())?;
+    append_blanks(&mut doc, &o.blanks)?;
+    let ids = pdf::page_ids(&doc);
+    let mut pages: HashMap<usize, Page> = HashMap::new();
+    let mut fonts = BTreeSet::new();
+    for item in &o.items {
+        let choice = match item {
+            Item::Text(t) if !t.text.trim().is_empty() => text_choice(t)?,
+            Item::Replace(r) => {
+                let id = page_of(&ids, r.page)?;
+                let page = pages
+                    .entry(r.page)
+                    .or_insert_with(|| interp::interpret(&doc, id));
+                replace_choice(page, r.page, r)?.2
+            }
+            _ => continue,
+        };
+        if let Choice::Bundled(k) = choice {
+            fonts.insert(k);
+        }
+    }
+    Ok(EditPlan {
+        fonts: fonts.into_iter().collect(),
+    })
+}
+
+#[cfg(feature = "typeset")]
+struct Fonts<'a> {
+    ts: crate::typeset::Typesetter<'a>,
+    slots: HashMap<FontRef, usize>,
+    attachments: &'a [Vec<u8>],
+    bundled: &'a BTreeMap<String, usize>,
+    fallbacks: Vec<usize>,
+}
+
+#[cfg(feature = "typeset")]
+impl<'a> Fonts<'a> {
+    fn new(attachments: &'a [Vec<u8>], o: &'a EditOptions) -> Result<Self> {
+        let mut f = Fonts {
+            ts: crate::typeset::Typesetter::new(),
+            slots: HashMap::new(),
+            attachments,
+            bundled: &o.bundled,
+            fallbacks: vec![],
+        };
+        for r in &o.fallback_fonts {
+            let slot = f.slot(r)?;
+            f.fallbacks.push(slot);
+        }
+        Ok(f)
+    }
+
+    fn slot(&mut self, r: &FontRef) -> Result<usize> {
+        if let Some(&s) = self.slots.get(r) {
+            return Ok(s);
+        }
+        let data = self.attachments.get(r.file).ok_or_else(|| {
+            Error::option(format!(
+                "font file {} was not given ({} attachments)",
+                r.file + 1,
+                self.attachments.len()
+            ))
+        })?;
+        let index = r
+            .name
+            .as_deref()
+            .map(|nm| crate::typeset::face_index(data, nm))
+            .unwrap_or(0);
+        let s = self.ts.add_face(data, index)?;
+        self.slots.insert(r.clone(), s);
+        Ok(s)
+    }
+
+    /// The faces to try for `choice`, in order.
+    fn chain(&mut self, choice: &Choice) -> Result<Vec<usize>> {
+        let primary = match choice {
+            Choice::File(r) => self.slot(r)?,
+            Choice::Bundled(k) => {
+                let file = *self
+                    .bundled
+                    .get(k)
+                    .ok_or_else(|| Error::option(format!("the bundled font {k} was not given")))?;
+                self.slot(&FontRef { file, name: None })?
+            }
+            Choice::Original(..) => unreachable!("original fonts are not typeset"),
+        };
+        let mut chain = vec![primary];
+        chain.extend(self.fallbacks.iter().copied().filter(|s| *s != primary));
+        Ok(chain)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lines(
+        &mut self,
+        doc: &mut Document,
+        page: ObjectId,
+        choice: &Choice,
+        text: &str,
+        x: f32,
+        first_baseline: f32,
+        size: f32,
+    ) -> Result<Vec<u8>> {
+        let chain = self.chain(choice)?;
+        let mut out = vec![];
+        for (i, line) in text.lines().enumerate() {
+            let laid = self.ts.layout(&chain, line, size)?;
+            let y = first_baseline - size * TEXT_LINE * i as f32;
+            out.extend(self.ts.draw(doc, page, &laid, x, y, size)?);
+        }
+        Ok(out)
+    }
+
+    fn finish(self, doc: &mut Document) -> Result<()> {
+        self.ts.finish(doc)
+    }
+}
+
+#[cfg(not(feature = "typeset"))]
+struct Fonts;
+
+#[cfg(not(feature = "typeset"))]
+impl Fonts {
+    fn new(_: &[Vec<u8>], _: &EditOptions) -> Result<Self> {
+        Ok(Fonts)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lines(
+        &mut self,
+        _: &mut Document,
+        _: ObjectId,
+        _: &Choice,
+        _: &str,
+        _: f32,
+        _: f32,
+        _: f32,
+    ) -> Result<Vec<u8>> {
+        Err(Error::Unsupported(
+            "writing text needs the render engine".into(),
+        ))
+    }
+
+    fn finish(self, _: &mut Document) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Text in a font the page already has, from codes that font maps.
+fn original_lines(
+    doc: &mut Document,
+    page: ObjectId,
+    info: &Page,
+    font: usize,
+    lines: &[Vec<(u32, usize)>],
+    (x, baseline, size, hscale): (f32, f32, f32, f32),
+) -> Result<Vec<u8>> {
+    let name = pdf::add_resource(doc, page, b"Font", "PVO", info.font_objs[font].clone())?;
+    let f = &info.fonts[font];
+    let mut out = vec![];
+    for (i, codes) in lines.iter().enumerate() {
+        let bytes: Vec<u8> = codes
+            .iter()
+            .flat_map(|&(c, len)| f.code_bytes(c, len))
+            .collect();
+        out.extend(b"BT /");
+        out.extend(&name);
+        out.extend(format!(" {} Tf ", n(size)).into_bytes());
+        if (hscale - 100.0).abs() > 0.01 {
+            out.extend(format!("{} Tz ", n(hscale)).into_bytes());
+        }
+        out.extend(
+            format!("{} {} Td ", n(x), n(baseline - size * TEXT_LINE * i as f32)).into_bytes(),
+        );
+        crate::content::write_obj(&mut out, &Object::string_literal(bytes));
+        out.extend(b" Tj ET\n");
+    }
+    Ok(out)
+}
+
+/// Apply `o` to the PDF in `inputs[0]`; `inputs[1..]` are the attachments
+/// items refer to (images, font files, the bundled fonts).
 pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)> {
-    let (pdf_bytes, image_inputs) = inputs
+    let (pdf_bytes, attachments) = inputs
         .split_first()
         .ok_or_else(|| Error::option("edit needs a PDF"))?;
     let mut doc = pdf::load(pdf_bytes, o.password.as_deref())?;
@@ -406,17 +835,97 @@ pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)
         ..Default::default()
     };
 
+    // 1. What leaves the content, decided on the pages as they were.
+    let mut pages: BTreeMap<usize, Page> = BTreeMap::new();
+    let mut boxes: BTreeMap<usize, Vec<[f32; 4]>> = BTreeMap::new();
+    let mut replaces: Vec<(usize, Vec<usize>, Choice, ReplaceItem)> = vec![];
+    for (i, item) in o.items.iter().enumerate() {
+        match item {
+            Item::Replace(r) => {
+                finite(&[r.x, r.y, r.w, r.h])?;
+                let id = page_of(&ids, r.page)?;
+                let page = pages
+                    .entry(r.page)
+                    .or_insert_with(|| interp::interpret(&doc, id));
+                let (placed, glyphs, choice) = replace_choice(page, r.page, r)?;
+                replaces.push((i, glyphs, choice, placed));
+            }
+            Item::Redact(b) => {
+                finite(&[b.x, b.y, b.w, b.h])?;
+                let id = page_of(&ids, b.page)?;
+                pages
+                    .entry(b.page)
+                    .or_insert_with(|| interp::interpret(&doc, id));
+                boxes.entry(b.page).or_default().push(b.bounds());
+            }
+            _ => {}
+        }
+    }
+    // Replace items whose old glyphs could only be covered, not removed.
+    let mut covered: BTreeSet<usize> = BTreeSet::new();
+    for (&p, page) in &pages {
+        let id = ids[p];
+        let mut text_glyphs: Removal = Removal::default();
+        for (i, glyphs, _, _) in replaces.iter().filter(|r| o.items[r.0].page() == p) {
+            let removable = glyphs.iter().all(|&g| {
+                let gl = &page.glyphs[g];
+                !page.fonts[gl.font].uncertain && !page.streams[gl.stream].broken
+            });
+            if removable {
+                text_glyphs.glyphs.extend(glyphs);
+            } else {
+                covered.insert(*i);
+            }
+        }
+        let redaction = match boxes.get(&p) {
+            Some(b) if o.redaction == Redaction::Remove => match redact::removal(page, b) {
+                Some(r) => Some(r),
+                None => {
+                    report.flatten.push(p);
+                    None
+                }
+            },
+            Some(_) => {
+                report.flatten.push(p);
+                None
+            }
+            None => None,
+        };
+        let redacting = redaction.is_some();
+        let mut all = redaction.unwrap_or_default();
+        all.glyphs.extend(text_glyphs.glyphs.iter().copied());
+        match scrub::apply(&mut doc, id, page, &all) {
+            Ok(()) => {
+                if redacting {
+                    redact::remove_annotations(&mut doc, id, &page.to_visual, &boxes[&p])?;
+                    report.redacted_pages.push(p + 1);
+                }
+            }
+            Err(_) => {
+                // Leave the redaction to the renderer and try the text alone.
+                if redacting {
+                    report.flatten.push(p);
+                }
+                if !redacting || scrub::apply(&mut doc, id, page, &text_glyphs).is_err() {
+                    for (i, _, _, _) in replaces.iter().filter(|r| o.items[r.0].page() == p) {
+                        covered.insert(*i);
+                    }
+                }
+            }
+        }
+    }
+    report.flatten.sort_unstable();
+    report.flatten.dedup();
+
+    // 2. Everything drawn, page by page in item order; redaction boxes last.
+    let mut fonts = Fonts::new(attachments, o)?;
     let mut ops: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
+    let mut black: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
     let mut embedded: HashMap<usize, (ObjectId, u32, u32)> = HashMap::new();
-    for item in &o.items {
+    let mut replace_at = replaces.iter();
+    for (index, item) in o.items.iter().enumerate() {
         let p = item.page();
-        let page = *ids.get(p).ok_or_else(|| {
-            Error::option(format!(
-                "page {} does not exist ({} pages)",
-                p + 1,
-                ids.len()
-            ))
-        })?;
+        let page = page_of(&ids, p)?;
         let mut out = Vec::new();
         let alpha = |doc: &mut Document, opacity: f32| -> Result<String> {
             Ok(stamp::add_alpha(doc, page, opacity.clamp(0.0, 1.0))?
@@ -426,19 +935,80 @@ pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)
         match item {
             Item::Text(t) => {
                 finite(&[t.x, t.y])?;
-                if !(1.0..=500.0).contains(&t.size) {
-                    return Err(Error::option("font size must be between 1 and 500"));
-                }
+                check_size(t.size)?;
                 if t.text.trim().is_empty() {
                     continue;
                 }
-                let font = stamp::add_font(&mut doc, page, t.bold)?;
-                out.extend(format!("q {} rg\n", rgb(parse_color(&t.color)?)).into_bytes());
-                for (i, line) in t.text.lines().enumerate() {
-                    let y = t.y - t.size * (TEXT_ASCENT + TEXT_LINE * i as f32);
-                    stamp::push_text(&mut out, &font, t.size, t.x, y, &stamp::win_ansi(line));
+                let choice = text_choice(t)?;
+                let color = rgb(parse_color(&t.color)?);
+                let body = fonts.lines(
+                    &mut doc,
+                    page,
+                    &choice,
+                    &t.text,
+                    t.x,
+                    t.y - t.size * TEXT_ASCENT,
+                    t.size,
+                )?;
+                out.extend(format!("q {color} rg\n").into_bytes());
+                out.extend(body);
+                out.extend(b"Q\n");
+            }
+            Item::Replace(_) => {
+                let (_, glyphs, choice, r) = replace_at.next().expect("one entry per replace item");
+                let info = &pages[&p];
+                let first = glyphs.first().map(|&g| &info.glyphs[g]);
+                let b = r.bounds();
+                let size = r.size.or(first.map(|g| g.size)).unwrap_or(b[3] - b[1]);
+                check_size(size)?;
+                let color = match &r.color {
+                    Some(c) => parse_color(c)?,
+                    None => first.map(|g| g.color).unwrap_or([0.0; 3]),
+                };
+                let x = r.start.or(first.map(|g| g.origin[0])).unwrap_or(b[0]);
+                let baseline = r
+                    .baseline
+                    .or(first.map(|g| g.origin[1]))
+                    .unwrap_or(b[1] + (b[3] - b[1]) * 0.25);
+                let hscale = r.hscale.or(first.map(|g| g.hscale)).unwrap_or(100.0);
+                finite(&[size, x, baseline, hscale])?;
+                out.extend(b"q\n");
+                if covered.contains(&index) {
+                    report.covered += 1;
+                    out.extend(
+                        format!(
+                            "1 1 1 rg {} {} {} {} re f\n",
+                            n(b[0] - 1.0),
+                            n(b[1] - 1.0),
+                            n(b[2] - b[0] + 2.0),
+                            n(b[3] - b[1] + 2.0)
+                        )
+                        .into_bytes(),
+                    );
+                }
+                if !r.text.trim().is_empty() {
+                    out.extend(format!("{} rg\n", rgb(color)).into_bytes());
+                    match choice {
+                        Choice::Original(f, lines) => {
+                            report.same_font += 1;
+                            out.extend(original_lines(
+                                &mut doc,
+                                page,
+                                info,
+                                *f,
+                                lines,
+                                (x, baseline, size, hscale),
+                            )?);
+                        }
+                        other => out.extend(
+                            fonts.lines(&mut doc, page, other, &r.text, x, baseline, size)?,
+                        ),
+                    }
                 }
                 out.extend(b"Q\n");
+                report.replaced += 1;
+                ops.entry(p).or_default().extend(out);
+                continue;
             }
             Item::Rect(r) => {
                 finite(&[r.x, r.y, r.w, r.h, r.line_width])?;
@@ -509,11 +1079,11 @@ pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)
                 if im.w <= 0.0 || im.h <= 0.0 {
                     return Err(Error::option("an image needs a positive width and height"));
                 }
-                let bytes = image_inputs.get(im.image).ok_or_else(|| {
+                let bytes = attachments.get(im.image).ok_or_else(|| {
                     Error::option(format!(
-                        "image {} was not given ({} images)",
+                        "image {} was not given ({} attachments)",
                         im.image + 1,
-                        image_inputs.len()
+                        attachments.len()
                     ))
                 })?;
                 let (xobj, _, _) = match embedded.get(&im.image) {
@@ -547,10 +1117,26 @@ pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)
                 report.annotations += 1;
                 continue;
             }
-            Item::Redact(_) => continue,
+            Item::Redact(b) => {
+                let r = b.bounds();
+                black.entry(p).or_default().extend(
+                    format!(
+                        "0 0 0 rg {} {} {} {} re f\n",
+                        n(r[0]),
+                        n(r[1]),
+                        n(r[2] - r[0]),
+                        n(r[3] - r[1])
+                    )
+                    .into_bytes(),
+                );
+                continue;
+            }
         }
         report.drawn += 1;
         ops.entry(p).or_default().extend(out);
+    }
+    for (p, body) in black {
+        ops.entry(p).or_default().extend(body);
     }
     for (p, body) in ops {
         let id = ids[p];
@@ -561,6 +1147,7 @@ pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)
         content.extend(b"Q\n");
         pdf::append_content(&mut doc, id, content)?;
     }
+    fonts.finish(&mut doc)?;
     let out = pdf::save(&mut doc)?;
     if o.flatten_fields {
         return Ok((forms::flatten(&out, None)?.0, report));
@@ -568,7 +1155,7 @@ pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)
     Ok((out, report))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "typeset"))]
 mod tests {
     use super::*;
     use crate::fixtures;
@@ -585,12 +1172,49 @@ mod tests {
             .unwrap_or_default()
     }
 
+    /// Text as the content interpreter reads it (embedded fonts included).
+    fn read(bytes: &[u8], page: usize) -> String {
+        let doc = pdf::load(bytes, None).unwrap();
+        textedit::text_runs(&doc, &[page])
+            .into_iter()
+            .map(|r| r.text)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The PDF followed by the bundled fonts `plan` asks for.
+    fn with_fonts(pdf: Vec<u8>, extra: Vec<Vec<u8>>, o: &mut EditOptions) -> Vec<Vec<u8>> {
+        let p = plan(&pdf, o).unwrap();
+        let mut inputs = vec![pdf];
+        inputs.extend(extra);
+        for key in p.fonts {
+            let (fam, style) = key.split_once('-').unwrap();
+            let file = format!(
+                "Liberation{}-{}.ttf",
+                match fam {
+                    "sans" => "Sans",
+                    "serif" => "Serif",
+                    _ => "Mono",
+                },
+                match style {
+                    "regular" => "Regular",
+                    "bold" => "Bold",
+                    "italic" => "Italic",
+                    _ => "BoldItalic",
+                }
+            );
+            o.bundled.insert(key, inputs.len() - 1);
+            inputs.push(fixtures::bundled_font(&file));
+        }
+        inputs
+    }
+
     #[test]
     fn draws_every_kind_of_item() {
         let sig = fixtures::png(&image::DynamicImage::ImageRgba8(fixtures::with_alpha(
             &fixtures::line_art(200, 80),
         )));
-        let o = parse(
+        let mut o = parse(
             r##"{ "items": [
                 { "type": "text", "page": 0, "x": 72, "y": 700, "text": "Hello\nsecond line", "size": 18, "color": "#1a73e8", "bold": true },
                 { "type": "rect", "page": 0, "x": 60, "y": 60, "w": 200, "h": 40, "fill": "#ffffff" },
@@ -600,14 +1224,16 @@ mod tests {
                 { "type": "image", "page": 0, "x": 300, "y": 100, "w": 150, "h": 60, "image": 0, "opacity": 0.8 },
                 { "type": "note", "page": 0, "x": 500, "y": 750, "text": "Vérifier ce point" },
                 { "type": "highlight", "page": 1, "x": 72, "y": 690, "w": 200, "h": 16 },
-                { "type": "redact", "page": 1, "x": 0, "y": 0, "w": 10, "h": 10 }
+                { "type": "text", "page": 1, "x": 72, "y": 300, "text": "Ωμέγα – Привет – ça", "font": "serif", "italic": true }
             ] }"##,
         );
-        let (out, rep) = edit(&[fixtures::text_pdf(2), sig], &o).unwrap();
-        assert_eq!((rep.drawn, rep.annotations), (6, 2));
+        let inputs = with_fonts(fixtures::text_pdf(2), vec![sig], &mut o);
+        let (out, rep) = edit(&inputs, &o).unwrap();
+        assert_eq!((rep.drawn, rep.annotations), (7, 2));
         qpdf_check(&out);
-        let t = text_of(&out, 1);
+        let t = read(&out, 0);
         assert!(t.contains("Hello") && t.contains("second line"), "{t}");
+        assert!(read(&out, 1).contains("Ωμέγα – Привет – ça"));
         let doc = pdf::load(&out, None).unwrap();
         let ids = pdf::page_ids(&doc);
         let subtypes = |p: ObjectId| -> Vec<Vec<u8>> {
@@ -640,14 +1266,15 @@ mod tests {
 
     #[test]
     fn blanks_and_out_of_range() {
-        let o = parse(
+        let mut o = parse(
             r#"{ "blanks": [{ "size": "a4" }, {}],
                  "items": [{ "type": "text", "page": 3, "x": 50, "y": 800, "text": "On a blank page" }] }"#,
         );
-        let (out, rep) = edit(&[fixtures::text_pdf(2)], &o).unwrap();
+        let inputs = with_fonts(fixtures::text_pdf(2), vec![], &mut o);
+        let (out, rep) = edit(&inputs, &o).unwrap();
         assert_eq!((rep.pages, rep.blanks), (4, 2));
         qpdf_check(&out);
-        assert!(text_of(&out, 4).contains("On a blank page"));
+        assert!(read(&out, 3).contains("On a blank page"));
         let doc = pdf::load(&out, None).unwrap();
         let a4 = pdf::page_box(&doc, pdf::page_ids(&doc)[2]);
         assert!((a4[2] - 595.28).abs() < 0.01);
@@ -656,6 +1283,11 @@ mod tests {
         assert!(edit(&[fixtures::text_pdf(2)], &bad).is_err());
         let no_img = parse(r#"{ "items": [{ "type": "image", "page": 0, "w": 10, "h": 10 }] }"#);
         assert!(edit(&[fixtures::text_pdf(1)], &no_img).is_err());
+        let no_font = parse(r#"{ "items": [{ "type": "text", "page": 0, "text": "x" }] }"#);
+        assert!(
+            edit(&[fixtures::text_pdf(1)], &no_font).is_err(),
+            "bundled font missing"
+        );
     }
 
     #[test]
@@ -674,16 +1306,26 @@ mod tests {
     #[test]
     fn rotated_page_items_follow_the_display() {
         let rotated = crate::pages::rotate(&fixtures::text_pdf(1), 90, None, None).unwrap();
-        let o = parse(
+        let mut o = parse(
             r#"{ "items": [
                 { "type": "text", "page": 0, "x": 40, "y": 580, "text": "Upright" },
                 { "type": "highlight", "page": 0, "x": 40, "y": 40, "w": 100, "h": 20 }
             ] }"#,
         );
-        let (out, _) = edit(&[rotated], &o).unwrap();
+        let inputs = with_fonts(rotated, vec![], &mut o);
+        let (out, _) = edit(&inputs, &o).unwrap();
         qpdf_check(&out);
         let doc = pdf::load(&out, None).unwrap();
         let page = pdf::page_ids(&doc)[0];
+        let upright = interp::interpret(&doc, page)
+            .glyphs
+            .into_iter()
+            .find(|g| g.text.as_deref() == Some("U"))
+            .unwrap();
+        assert!(
+            upright.angle.abs() < 0.01,
+            "added text reads upright on the turned page"
+        );
         let annot = doc
             .get_dictionary(page)
             .unwrap()
@@ -705,5 +1347,109 @@ mod tests {
             .collect();
         // 90° clockwise: visual x runs up the user-space y axis.
         assert_eq!(r, vec![552.0, 40.0, 572.0, 140.0]);
+    }
+
+    fn run_box(bytes: &[u8], text: &str) -> textedit::TextRun {
+        let doc = pdf::load(bytes, None).unwrap();
+        textedit::text_runs(&doc, &[0])
+            .into_iter()
+            .find(|r| r.text == text)
+            .unwrap()
+    }
+
+    #[test]
+    fn replaces_text_in_its_own_font() {
+        let pdf = fixtures::text_pdf(1);
+        let r = run_box(&pdf, "Second line of body text.");
+        let json = format!(
+            r#"{{ "items": [{{ "type": "replace", "page": 0, "x": {}, "y": {}, "w": {}, "h": {}, "text": "Ligne modifiée, été 2026" }}] }}"#,
+            r.x, r.y, r.w, r.h
+        );
+        let mut o = parse(&json);
+        assert!(
+            plan(&pdf, &o).unwrap().fonts.is_empty(),
+            "Helvetica has every letter"
+        );
+        let inputs = with_fonts(pdf, vec![], &mut o);
+        let (out, rep) = edit(&inputs, &o).unwrap();
+        assert_eq!((rep.replaced, rep.same_font, rep.covered), (1, 1, 0));
+        qpdf_check(&out);
+        let t = text_of(&out, 1);
+        assert!(
+            t.contains("Ligne modifiée, été 2026") && !t.contains("Second line"),
+            "{t}"
+        );
+        let after = run_box(&out, "Ligne modifiée, été 2026");
+        assert!((after.start - r.start).abs() < 0.01 && (after.baseline - r.baseline).abs() < 0.01);
+        assert!((after.size - r.size).abs() < 0.01);
+    }
+
+    #[test]
+    fn replaces_text_beyond_the_font_with_a_bundled_one() {
+        let pdf = fixtures::text_pdf(1);
+        let r = run_box(&pdf, "Page 1");
+        let json = format!(
+            r#"{{ "items": [{{ "type": "replace", "page": 0, "x": {}, "y": {}, "w": {}, "h": {}, "text": "Страница 1", "bold": true }}] }}"#,
+            r.x, r.y, r.w, r.h
+        );
+        let mut o = parse(&json);
+        assert_eq!(plan(&pdf, &o).unwrap().fonts, vec!["sans-bold".to_string()]);
+        let inputs = with_fonts(pdf, vec![], &mut o);
+        let (out, rep) = edit(&inputs, &o).unwrap();
+        assert_eq!((rep.replaced, rep.same_font), (1, 0));
+        qpdf_check(&out);
+        let after = run_box(&out, "Страница 1");
+        assert!(after.bold && (after.size - 24.0).abs() < 0.01);
+        assert!(!read(&out, 0).contains("Page 1"));
+    }
+
+    #[test]
+    fn replaces_a_line_found_by_its_text() {
+        let pdf = fixtures::text_pdf(1);
+        let mut o = parse(
+            r#"{ "items": [{ "type": "replace", "page": 0, "find": "quick brown", "text": "slow red" }] }"#,
+        );
+        let inputs = with_fonts(pdf.clone(), vec![], &mut o);
+        let (out, rep) = edit(&inputs, &o).unwrap();
+        assert_eq!(rep.same_font, 1);
+        let t = text_of(&out, 1);
+        assert!(
+            t.contains("The slow red fox jumps over the lazy dog.") && !t.contains("quick"),
+            "{t}"
+        );
+        let missing = parse(
+            r#"{ "items": [{ "type": "replace", "page": 0, "find": "absent", "text": "x" }] }"#,
+        );
+        assert!(edit(&[pdf], &missing).is_err());
+    }
+
+    #[test]
+    fn redaction_keeps_the_rest_of_the_page_selectable() {
+        let pdf = fixtures::text_pdf(1);
+        let r = run_box(&pdf, "The quick brown fox jumps over the lazy dog.");
+        let json = format!(
+            r#"{{ "items": [{{ "type": "redact", "page": 0, "x": {}, "y": {}, "w": {}, "h": {} }}] }}"#,
+            r.x,
+            r.y,
+            r.w * 0.45,
+            r.h
+        );
+        let o = parse(&json);
+        let (out, rep) = edit(&[pdf], &o).unwrap();
+        assert_eq!(rep.redacted_pages, vec![1]);
+        assert!(rep.flatten.is_empty());
+        qpdf_check(&out);
+        let t = text_of(&out, 1);
+        assert!(!t.contains("quick") && !t.contains("brown"), "{t}");
+        assert!(
+            t.contains("lazy dog") && t.contains("Page 1") && t.contains("Second line"),
+            "{t}"
+        );
+        let flat: EditOptions = serde_json::from_str(
+            &json.replace("\"items\"", "\"redaction\": \"flatten\", \"items\""),
+        )
+        .unwrap();
+        let (_, rep) = edit(&[fixtures::text_pdf(1)], &flat).unwrap();
+        assert_eq!(rep.flatten, vec![0]);
     }
 }

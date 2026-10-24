@@ -2,6 +2,7 @@ import initCore, * as core from "../wasm/core/core.js";
 import initOcr, * as ocr from "../wasm/ocr/ocr.js";
 import initRender, * as render from "../wasm/render/render.js";
 import { EngineError, toEngineError } from "./errors.ts";
+import { BUNDLED_FONTS, type FontFile, type FontKey } from "./fonts.ts";
 
 export type ModuleName = "core" | "render" | "ocr";
 export type ModelName = "text-detection.rten" | "text-recognition.rten";
@@ -11,6 +12,7 @@ export type WasmSource = BufferSource | WebAssembly.Module | Response;
 export interface Loader {
   wasm(name: ModuleName): Promise<WasmSource>;
   model(name: ModelName): Promise<Uint8Array>;
+  font(name: FontFile): Promise<Uint8Array>;
 }
 
 export interface OutFile {
@@ -49,6 +51,7 @@ interface RawResult {
 export class Engine {
   #loader: Loader;
   #ready: Partial<Record<ModuleName, Promise<void>>> = {};
+  #fonts: Partial<Record<FontKey, Promise<Uint8Array>>> = {};
 
   constructor(loader: Loader) {
     this.#loader = loader;
@@ -105,6 +108,15 @@ export class Engine {
     } catch (e) {
       throw toEngineError(e);
     }
+  }
+
+  /** One of the bundled fonts, loaded once. */
+  font(key: FontKey): Promise<Uint8Array> {
+    this.#fonts[key] ??= this.#loader.font(BUNDLED_FONTS[key]).catch((e: unknown) => {
+      delete this.#fonts[key];
+      throw new EngineError("internal", `could not load the font ${BUNDLED_FONTS[key]}: ${String(e)}`);
+    });
+    return this.#fonts[key];
   }
 
   /** Whether a module is already loaded (the site shows a hint before heavy loads). */

@@ -87,14 +87,28 @@ function Unlock({ file }: { file: WorkFile }) {
   );
 }
 
+/** Open a PDF of your files in the viewer. */
+function view(f: WorkFile) {
+  workspace.viewing = f.key;
+  location.hash = "#/view";
+}
+
 function FileCard({ f, i, count, selected, onToggle }: { f: WorkFile; i: number; count: number; selected: boolean; onToggle: () => void }) {
   const id = useId();
+  const readable = f.kind === "pdf" && !f.locked;
+  const thumb = f.thumb ? <img src={f.thumb} alt="" decoding="async" /> : <Icon name={f.kind === "image" ? "image" : "file"} />;
   return (
     <li className="ws-file" data-selected={selected} data-kind={f.kind}>
       <input id={id} type="checkbox" checked={selected} disabled={f.kind === "unsupported"} onChange={onToggle} aria-label={`Select ${f.name}`} />
-      <label htmlFor={id} className="ws-thumb">
-        {f.thumb ? <img src={f.thumb} alt="" decoding="async" /> : <Icon name={f.kind === "image" ? "image" : "file"} />}
-      </label>
+      {readable ? (
+        <button type="button" className="ws-thumb" onClick={() => view(f)} aria-label={`Open ${f.name}`} title="Open">
+          {thumb}
+        </button>
+      ) : (
+        <label htmlFor={id} className="ws-thumb">
+          {thumb}
+        </label>
+      )}
       <div className="ws-meta">
         <span className="name" title={f.name}>
           {f.name}
@@ -112,6 +126,11 @@ function FileCard({ f, i, count, selected, onToggle }: { f: WorkFile; i: number;
         {f.locked ? <Unlock file={f} /> : null}
       </div>
       <div className="ws-tools">
+        {readable ? (
+          <button type="button" className="icon" onClick={() => view(f)} aria-label={`View ${f.name}`} title="View">
+            <Icon name="view" />
+          </button>
+        ) : null}
         {f.previous ? (
           <button type="button" className="link small-link" onClick={() => workspace.restore(f.key)}>
             Restore original
@@ -182,7 +201,8 @@ export function Workspace() {
 
   const choose = (a: WorkAction) => {
     if ("route" in a.plan) {
-      workspace.editing = a.plan.file;
+      if (a.plan.route === "#/view") workspace.viewing = a.plan.file;
+      else workspace.editing = a.plan.file;
       location.hash = a.plan.route;
       return;
     }

@@ -1,12 +1,52 @@
 // The editor's document: what the site's editor builds and `pdfvault edit
-// --ops` reads. One JSON shape drives three engine calls (core `edit`, render
-// `redact`, core `arrange`); see crates/core/src/edit.rs for the drawing rules.
+// --ops` reads. One JSON shape drives the engine calls (core `edit-plan`,
+// render `edit`, core `arrange`); see crates/core/src/edit.rs for the rules.
 
 import { EngineError } from "./errors.ts";
 
+/** A font file among the attachments; `name` picks a face in a collection (.ttc). */
+export interface FontRef {
+  file: number;
+  name?: string;
+}
+
 /** Visual page space: points, origin at the bottom-left of the page as displayed. */
 export type EditItem =
-  | { type: "text"; page: number; x: number; y: number; text: string; size?: number; color?: string; bold?: boolean }
+  | {
+      type: "text";
+      page: number;
+      x: number;
+      y: number;
+      text: string;
+      size?: number;
+      color?: string;
+      font?: "sans" | "serif" | "mono";
+      bold?: boolean;
+      italic?: boolean;
+      fontFile?: FontRef;
+    }
+  | {
+      /** Existing text rewritten: glyphs whose centre is in the box go, `text` is written in their place. */
+      type: "replace";
+      page: number;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      text: string;
+      /** Instead of a box: the first line of the page containing this is rewritten, with it replaced by `text`. */
+      find?: string;
+      start?: number;
+      baseline?: number;
+      size?: number;
+      color?: string;
+      /** "auto": the original font when it has every character, else the closest bundled one. */
+      font?: "auto" | "sans" | "serif" | "mono";
+      bold?: boolean;
+      italic?: boolean;
+      fontFile?: FontRef;
+      hscale?: number;
+    }
   | { type: "rect"; page: number; x: number; y: number; w: number; h: number; fill?: string; stroke?: string; lineWidth?: number; opacity?: number }
   | { type: "ink"; page: number; paths: number[][]; color?: string; lineWidth?: number; opacity?: number }
   | { type: "image"; page: number; x: number; y: number; w: number; h: number; image: number; opacity?: number }
@@ -20,9 +60,14 @@ export interface EditOps {
   fields?: Record<string, string | boolean>;
   flattenFields?: boolean;
   items?: EditItem[];
+  /** "remove" (default): what is under a redaction box leaves the content, the rest stays
+   *  selectable. "flatten": redacted pages become images. */
+  redaction?: "remove" | "flatten";
+  /** Fonts (attachments) tried for characters a text's own font lacks. */
+  fallbackFonts?: FontRef[];
   /** The output pages in order (0-based, blanks included); omitted = unchanged. */
   order?: { page: number; rotate?: number }[];
-  /** Resolution redacted pages are rasterized at. */
+  /** Resolution pages turned into images are rendered at. */
   redactDpi?: number;
 }
 
@@ -40,13 +85,38 @@ export interface FormField {
   maxLen: number | null;
 }
 
+/** A line of existing text as `text-runs` lists it (visual page space). */
+export interface TextRun {
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  start: number;
+  baseline: number;
+  size: number;
+  text: string;
+  family: "sans" | "serif" | "mono";
+  bold: boolean;
+  italic: boolean;
+  color: string;
+  fontName: string;
+  hscale: number;
+  editable: boolean;
+}
+
 export interface EditReport {
   pages: number;
   blanks: number;
   fields: number;
   drawn: number;
   annotations: number;
+  replaced: number;
+  sameFont: number;
+  covered: number;
+  /** Pages with redactions (1-based), and those that had to become images. */
   redactedPages: number[];
+  flattenedPages: number[];
 }
 
 /** First baseline of a text item, in font sizes below its top (matches the Rust side). */
@@ -65,12 +135,19 @@ export function parseEdits(json: string): EditOps {
   return v as EditOps;
 }
 
-/** Redaction boxes grouped by page, as render `redact` takes them. */
-export function redactions(items: EditItem[] = []): { page: number; rects: [number, number, number, number][] }[] {
+/** Redaction boxes grouped by page, as render `redact-check` takes them. */
+export function redactionBoxes(ops: EditOps): { page: number; rects: [number, number, number, number][] }[] {
   const by = new Map<number, [number, number, number, number][]>();
-  for (const it of items) {
+  for (const it of ops.items ?? []) {
     if (it.type !== "redact") continue;
     by.set(it.page, [...(by.get(it.page) ?? []), [it.x, it.y, it.w, it.h]]);
   }
-  return [...by].map(([page, rects]) => ({ page, rects }));
+  return [...by].sort((a, b) => a[0] - b[0]).map(([page, rects]) => ({ page, rects }));
+}
+
+/** The characters a `missing_glyphs` error names. */
+export function missingCharacters(e: unknown): string | null {
+  if (!(e instanceof EngineError) || e.code !== "missing_glyphs") return null;
+  const at = e.message.indexOf(": ");
+  return at < 0 ? "" : e.message.slice(at + 2);
 }

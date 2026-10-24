@@ -79,6 +79,8 @@ class Workspace {
   #listeners = new Set<Listener>();
   /** The file the editor should open next. */
   editing: string | null = null;
+  /** The file the viewer should open next. */
+  viewing: string | null = null;
 
   subscribe(fn: Listener): () => void {
     this.#listeners.add(fn);

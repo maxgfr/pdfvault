@@ -465,6 +465,112 @@ pub fn redact(bytes: &[u8], o: &RedactOptions) -> Result<(Vec<u8>, Vec<usize>)> 
     Ok((out, done))
 }
 
+// ---------------------------------------------------------------- edit
+
+/// Centres of the glyphs hayro draws, in points from the top-left of the page.
+struct GlyphCenters {
+    centers: Vec<Point>,
+}
+
+impl<'a> Device<'a> for GlyphCenters {
+    fn draw_path(&mut self, _: &BezPath, _: DrawProps<'a>, _: &DrawMode) {}
+    fn push_clip_path(&mut self, _: &ClipPath) {}
+    fn push_transparency_group(&mut self, _: f32, _: Option<SoftMask<'a>>, _: BlendMode) {}
+    fn draw_glyph_run(&mut self, run: &GlyphRun<'_, 'a>, props: DrawProps<'a>, _: &DrawMode) {
+        for g in run.glyphs() {
+            let t: Affine = props.transform * g.transform();
+            let advance = match &**g {
+                Glyph::Outline(o) => o.advance_width().unwrap_or(500.0) as f64,
+                Glyph::Type3(_) => 500.0,
+            };
+            // Half the advance along the baseline, a third of the em up.
+            self.centers.push(t * Point::new(advance / 2.0, 300.0));
+        }
+    }
+    fn draw_image(&mut self, _: Image<'a, '_>, _: ImageDrawProps<'a>) {}
+    fn pop_clip(&mut self) {}
+    fn pop_transparency_group(&mut self) {}
+}
+
+/// Whether hayro still finds a glyph under one of `boxes` (visual space,
+/// bottom-left origin) on page `index`.
+fn glyphs_left(pdf: &Pdf, index: usize, boxes: &[[f32; 4]]) -> bool {
+    let Some(page) = pdf.pages().get(index) else {
+        return false;
+    };
+    let (w, h) = page.render_dimensions();
+    let cache = InterpreterCache::new();
+    let mut ctx = Context::new(
+        page.initial_transform(true).to_kurbo(),
+        Rect::new(0.0, 0.0, w as f64, h as f64),
+        &cache,
+        page.xref(),
+        InterpreterSettings {
+            render_annotations: false,
+            ..Default::default()
+        },
+    );
+    let mut dev = GlyphCenters { centers: vec![] };
+    interpret_page(page, &mut ctx, &mut dev);
+    // Shrink each box a little: a glyph that only touches its edge was kept on purpose.
+    dev.centers.iter().any(|c| {
+        let (x, y) = (c.x as f32, h - c.y as f32);
+        boxes
+            .iter()
+            .any(|b| x > b[0] + 0.5 && x < b[2] - 0.5 && y > b[1] + 0.5 && y < b[3] - 0.5)
+    })
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RedactCheckOptions {
+    /// Every redacted page with its boxes, as [`RedactOptions::pages`].
+    pub pages: Vec<RedactPage>,
+    /// Pages (0-based) the content pass already gave up on.
+    pub flatten: Vec<usize>,
+    pub dpi: Option<f32>,
+}
+
+/// Redaction made sure of, after the editor's content pass
+/// ([`pdfvault_core::edit::edit`]): each redacted page is read again by hayro,
+/// an independent interpreter, and any page where a glyph is still found
+/// under a box, or that the content pass could not handle, becomes an image.
+/// Returns the PDF and the pages (1-based) turned into images.
+pub fn redact_check(bytes: &[u8], o: &RedactCheckOptions) -> Result<(Vec<u8>, Vec<usize>)> {
+    let mut flatten = o.flatten.clone();
+    let pdf = open(bytes, None)?;
+    for p in &o.pages {
+        if p.rects.iter().flatten().any(|v| !v.is_finite()) {
+            return Err(Error::option("redaction boxes must be finite numbers"));
+        }
+        let boxes: Vec<[f32; 4]> = p
+            .rects
+            .iter()
+            .map(|[x, y, w, h]| [x.min(x + w), y.min(y + h), x.max(x + w), y.max(y + h)])
+            .collect();
+        if !flatten.contains(&p.page) && glyphs_left(&pdf, p.page, &boxes) {
+            flatten.push(p.page);
+        }
+    }
+    flatten.sort_unstable();
+    flatten.dedup();
+    if flatten.is_empty() {
+        return Ok((bytes.to_vec(), vec![]));
+    }
+    let ro = RedactOptions {
+        dpi: o.dpi.unwrap_or(150.0),
+        pages: o
+            .pages
+            .iter()
+            .filter(|p| flatten.contains(&p.page))
+            .cloned()
+            .collect(),
+        ..Default::default()
+    };
+    let (out, done) = redact(bytes, &ro)?;
+    Ok((out, done))
+}
+
 // ---------------------------------------------------------------- dispatch
 
 #[derive(Deserialize, Default)]
@@ -481,6 +587,7 @@ pub const OPS: &[&str] = &[
     "compare",
     "extreme",
     "redact",
+    "redact-check",
     "page-count",
 ];
 
@@ -571,6 +678,22 @@ pub fn run(op: &str, inputs: Vec<Vec<u8>>, options: &str) -> Result<Output> {
                     bytes,
                 }],
                 report: json!({ "redactedPages": pages }),
+            })
+        }
+        "redact-check" => {
+            let o: RedactCheckOptions = if v.is_null() {
+                RedactCheckOptions::default()
+            } else {
+                serde_json::from_value(v).map_err(|e| Error::option(e.to_string()))?
+            };
+            let (bytes, flattened) = redact_check(one()?, &o)?;
+            Ok(Output {
+                files: vec![OutFile {
+                    suffix: "redacted".into(),
+                    ext: "pdf".into(),
+                    bytes,
+                }],
+                report: json!({ "flattenedPages": flattened }),
             })
         }
         "page-count" => {
@@ -704,6 +827,120 @@ mod tests {
         assert!(px(200, 792 - 680) < 40, "under the box");
         assert!(px(20, 20) > 200, "outside the box");
         assert!(redact(&two, &RedactOptions::default()).is_err());
+    }
+
+    /// The editor's two steps: core `edit`, then `redact-check`.
+    fn edit(pdf: Vec<u8>, json: &str) -> (Vec<u8>, Vec<usize>, Vec<usize>) {
+        let o: pdfvault_core::edit::EditOptions = serde_json::from_str(json).unwrap();
+        let (bytes, report) = pdfvault_core::edit::edit(&[pdf], &o).unwrap();
+        let mut pages: Vec<RedactPage> = vec![];
+        for item in &o.items {
+            if let pdfvault_core::edit::Item::Redact(b) = item {
+                match pages.iter_mut().find(|p| p.page == b.page) {
+                    Some(p) => p.rects.push([b.x, b.y, b.w, b.h]),
+                    None => pages.push(RedactPage {
+                        page: b.page,
+                        rects: vec![[b.x, b.y, b.w, b.h]],
+                    }),
+                }
+            }
+        }
+        let check = RedactCheckOptions {
+            pages,
+            flatten: report.flatten.clone(),
+            dpi: Some(72.0),
+        };
+        let (out, flattened) = redact_check(&bytes, &check).unwrap();
+        (out, report.redacted_pages, flattened)
+    }
+
+    #[test]
+    fn edit_redacts_in_the_content_and_checks_it() {
+        // "The quick brown fox…" sits on the baseline at y = 702 on page 1.
+        let two = pdfvault_core::pages::merge(&[fixtures::text_pdf(1), fixtures::form_pdf()], None)
+            .unwrap();
+        let (out, redacted, flattened) = edit(
+            two,
+            r#"{ "items": [
+                { "type": "redact", "page": 0, "x": 70, "y": 698, "w": 120, "h": 16 },
+                { "type": "redact", "page": 1, "x": 115, "y": 640, "w": 235, "h": 70 }
+            ] }"#,
+        );
+        assert_eq!(redacted, vec![1, 2]);
+        assert!(flattened.is_empty());
+        let doc = pdf::load(&out, None).unwrap();
+        let first = doc.extract_text(&[1]).unwrap();
+        assert!(
+            !first.contains("quick") && first.contains("lazy dog") && first.contains("Page 1"),
+            "{first}"
+        );
+        let second = doc.extract_text(&[2]).unwrap();
+        assert!(
+            second.contains("Form") && second.contains("Name:"),
+            "{second}"
+        );
+        assert!(
+            pdfvault_core::forms::list_fields(&out, None)
+                .unwrap()
+                .iter()
+                .all(|f| f.name != "name")
+        );
+        // And the box is black where it was drawn.
+        let (files, _) = render_pages(
+            &out,
+            &RenderOptions {
+                format: "rgba".into(),
+                dpi: 72.0,
+                pages: Some("1".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(files[0].bytes[((792 - 705) * 612 + 100) * 4] < 40);
+    }
+
+    #[test]
+    fn edit_flattens_what_it_cannot_redact_in_the_content() {
+        // A CMYK image the content pass cannot repaint: that page becomes an image.
+        let mut b = fixtures::Builder::new();
+        let cmyk = b.doc.add_object(pdfvault_core::lopdf::Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Image", "Width" => 2, "Height" => 2,
+                "ColorSpace" => "DeviceCMYK", "BitsPerComponent" => 8,
+            },
+            vec![0, 255, 255, 0, 255, 0, 255, 0, 255, 255, 0, 0, 0, 0, 0, 255],
+        ));
+        b.image_page(cmyk, 200.0, 200.0);
+        b.text_page(&["Untouched"]);
+        let (out, _, flattened) = edit(
+            b.finish(),
+            r#"{ "items": [{ "type": "redact", "page": 0, "x": 36, "y": 36, "w": 100, "h": 100 }] }"#,
+        );
+        assert_eq!(flattened, vec![1]);
+        let doc = pdf::load(&out, None).unwrap();
+        assert!(doc.extract_text(&[2]).unwrap().contains("Untouched"));
+    }
+
+    #[test]
+    fn the_check_catches_text_the_content_pass_missed() {
+        // Nothing was removed: hayro still finds "Page 1" under the box.
+        let o = RedactCheckOptions {
+            pages: vec![RedactPage {
+                page: 0,
+                rects: vec![[60.0, 700.0, 120.0, 40.0]],
+            }],
+            dpi: Some(72.0),
+            ..Default::default()
+        };
+        let (out, flattened) = redact_check(&fixtures::text_pdf(1), &o).unwrap();
+        assert_eq!(flattened, vec![1]);
+        assert!(
+            !pdf::load(&out, None)
+                .unwrap()
+                .extract_text(&[1])
+                .unwrap_or_default()
+                .contains("Page 1")
+        );
     }
 
     #[test]

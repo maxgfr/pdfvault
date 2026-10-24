@@ -6,7 +6,7 @@ import { Engine, EngineError, toolById, withDefaults, type Loader, type ModuleNa
 declare const self: DedicatedWorkerGlobalScope;
 
 /** Core operations the page may call directly, outside the tool registry. */
-export const DIRECT_OPS = ["kdf", "zip", "meta-read", "info", "form-fields"] as const;
+export const DIRECT_OPS = ["kdf", "zip", "meta-read", "info", "form-fields", "text-runs"] as const;
 
 export interface JobRequest {
   /** A tool id, or `core:<op>` for one of DIRECT_OPS. */
@@ -37,6 +37,11 @@ self.onmessage = async (event: MessageEvent<JobRequest>) => {
     async model(name) {
       const res = await fetch(new URL(`./models/${name}`, self.location.href));
       if (!res.ok) throw new EngineError("ocr_model", `could not load ${name} (${res.status})`);
+      return new Uint8Array(await res.arrayBuffer());
+    },
+    async font(name) {
+      const res = await fetch(new URL(`./fonts/${name}`, self.location.href));
+      if (!res.ok) throw new EngineError("internal", `could not load ${name} (${res.status})`);
       return new Uint8Array(await res.arrayBuffer());
     },
   };

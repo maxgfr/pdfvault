@@ -18,9 +18,9 @@ Online PDF tools ask you to upload contracts, payslips and scans to someone else
 
 ## How it works
 
-Start from your files, not from a tool. Drop several PDFs, photos or a whole folder on the home page (or paste a screenshot): the page lists them with a preview and offers what fits the selection. Compress works on a mix (each file gets the right tool), photos and PDFs combine into one PDF in the order shown, and every tool that accepts the selection is one click away. A result can replace its original in the list, so you can compress, then protect, then download, without saving anything in between. Formats the browser cannot read (HEIC, Office documents) are named with what to do instead.
+Start from your files, not from a tool. Drop several PDFs, photos or a whole folder on the home page (or paste a screenshot): the page lists them with a preview (click it to read the PDF page by page) and offers what fits the selection. Compress works on a mix (each file gets the right tool), photos and PDFs combine into one PDF in the order shown, and every tool that accepts the selection is one click away. A result can replace its original in the list, so you can compress, then protect, then download, without saving anything in between. Formats the browser cannot read (HEIC, Office documents) are named with what to do instead.
 
-The editor opens a PDF page by page: add text, whiteout, boxes, freehand drawing, a drawn or imported signature, images, highlights and sticky notes (real annotations other PDF apps can edit), fill form fields, redact for good, and reorder, rotate, duplicate, delete or insert pages from the page strip. Undo and redo cover every step. Saving runs the same `edit` command the CLI has.
+The editor opens a PDF page by page. **Edit text**: click a line of the document's own text and change it; the old glyphs are taken out of the page and the new text is written in the same font when that font has the letters, otherwise in Liberation Sans, Serif or Mono (metric-compatible with Arial, Times New Roman and Courier New). Add text in any script (shaped with HarfRust, right-to-left included; for scripts the bundled fonts lack, the editor uses a font from your device or one you pick). Whiteout, boxes, freehand drawing, a drawn or imported signature, images, highlights and sticky notes (real annotations other PDF apps can edit), form filling, and reorder, rotate, duplicate, delete or insert pages from the page strip. **Redaction** removes what lies under each box from the file itself (glyphs, image pixels, shapes, annotations and form fields over it) and leaves the rest of the page as it was, text included; a second, independent reading of each redacted page (hayro) turns any page it doubts into an image. Undo and redo cover every step. Saving runs the same `edit` command the CLI has.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/editor-dark.png">
@@ -33,7 +33,7 @@ The editor opens a PDF page by page: add text, whiteout, boxes, freehand drawing
 | --- | --- |
 | Compress | **Compress PDF** with four levels (below), never larger than the original |
 | Organize | Merge (one bookmark per file), combine PDFs and images into one PDF, split (ranges, every N pages, by bookmark), extract, delete, reorder, rotate, insert blank pages, N-up (2–16 pages per sheet) |
-| Edit | **Editor**: text, whiteout, shapes, drawing, signature and images, highlights and notes as annotations, form filling, true redaction, page strip. Crop, text watermark, page numbers, header and footer, visual signature (image stamp), metadata (read, edit, wipe), flatten forms, repair, compare (pixel diff per page), info |
+| Edit | **Editor**: change existing text, add text in any script, whiteout, shapes, drawing, signature and images, highlights and notes as annotations, form filling, true redaction that keeps the rest of the page selectable, page strip. **Viewer**. Crop, text watermark, page numbers, header and footer, visual signature (image stamp), metadata (read, edit, wipe), flatten forms, repair, compare (pixel diff per page), info |
 | Security | Password protection with **AES-256** (PDF 2.0, revision 6), permissions, unlock |
 | Convert | Images → PDF (JPEGs embedded untouched, EXIF orientation honored), PDF → PNG/JPEG/WebP, **OCR → searchable PDF**, PDF → Markdown, text or EPUB (OCR on scanned pages) |
 | Images | Compress, resize, convert JPEG/PNG/WebP, strip EXIF/GPS/XMP without re-encoding, crop/rotate/flip, in batches |
@@ -101,7 +101,8 @@ npx skills add maxgfr/pdfvault -a codex    # or name them
 
 ```
 crates/
-  core/      lopdf, image, jpeg-encoder, miniz_oxide, argon2: every PDF and image operation
+  core/      lopdf, image, jpeg-encoder, miniz_oxide, argon2: every PDF and image operation;
+             a content-stream interpreter for editing text and redacting, HarfRust + subsetter for writing it
   render/    hayro: rasterizing, positioned text, visual diff, the extreme level   (loaded on demand)
   ocr/       ocrs + rten: Latin-script OCR                                        (loaded on demand)
   wasm-*/    wasm-bindgen façades, one uniform run(op, inputs, options) each
@@ -122,7 +123,7 @@ Requirements: Rust (pinned in `rust-toolchain.toml`, with the `wasm32-unknown-un
 
 ```sh
 bun install
-bun run fetch-models     # ocrs models, pinned by SHA-256
+bun run fetch-models     # ocrs models and Liberation fonts, pinned by SHA-256
 bun run build:wasm       # crates → packages/engine/wasm
 bun run fixtures         # generated test PDFs and images (no third-party binaries)
 cargo test --workspace   # Rust, incl. qpdf --check on outputs and OCR
@@ -140,15 +141,16 @@ Fuzzing: `cd fuzz && cargo +nightly fuzz run parse`.
 - `extreme` turns text into pixels; run OCR on the result if it must stay searchable.
 - Fonts are not subset, so text-only PDFs shrink less than image-heavy ones.
 - The visual signature is an image, not a cryptographic signature.
-- The editor cannot retype existing text (cover it with whiteout, then add text), and added text uses Helvetica: Latin characters only.
-- Redaction rasterizes the pages it touches: everything on those pages becomes pixels. Run OCR afterwards if they must stay searchable.
+- Existing text is edited line by line, without reflowing a paragraph; a longer line runs further right. Lines in vertical writing or at an angle are not offered.
+- A changed line that its own font cannot write falls back to Liberation Sans, Serif or Mono, which look close to, not the same as, fonts other than Arial, Times and Courier.
+- Redaction turns a page into an image only when it cannot be sure (an image it cannot repaint, a font whose glyph positions are guessed); shapes crossing a box edge stay, hidden under it.
 - HEIC and AVIF photos and Office documents cannot be read; export them as JPEG or PDF first.
 - WebP output is lossless (no lossy WebP encoder in pure Rust).
 - No threads in wasm: GitHub Pages cannot send the COOP/COEP headers they need.
 
 ## Credits
 
-Built on [lopdf](https://github.com/J-F-Liu/lopdf), [hayro](https://github.com/LaurenzV/hayro), [ocrs](https://github.com/robertknight/ocrs) and [rten](https://github.com/robertknight/rten), [image](https://github.com/image-rs/image), [jpeg-encoder](https://github.com/vstroebel/jpeg-encoder), [miniz_oxide](https://github.com/Frommi/miniz_oxide) and [RustCrypto argon2](https://github.com/RustCrypto/password-hashes). The OCR models are © Robert Knight, [ocrs-models](https://github.com/robertknight/ocrs-models), licensed CC-BY-SA 4.0. This software is based in part on the work of the Independent JPEG Group. Inspired by [PDFCraft](https://github.com/PDFCraftTool/pdfcraft) and [pdf-craft](https://github.com/oomol-lab/pdf-craft).
+Built on [lopdf](https://github.com/J-F-Liu/lopdf), [hayro](https://github.com/LaurenzV/hayro), [ocrs](https://github.com/robertknight/ocrs) and [rten](https://github.com/robertknight/rten), [image](https://github.com/image-rs/image), [jpeg-encoder](https://github.com/vstroebel/jpeg-encoder), [miniz_oxide](https://github.com/Frommi/miniz_oxide) and [RustCrypto argon2](https://github.com/RustCrypto/password-hashes), [HarfRust](https://github.com/harfbuzz/harfrust), [skrifa](https://github.com/googlefonts/fontations), [subsetter](https://github.com/typst/subsetter) and [unicode-bidi](https://github.com/servo/unicode-bidi). The editor writes text with the [Liberation fonts](https://github.com/liberationfonts/liberation-fonts) (SIL Open Font License 1.1). The OCR models are © Robert Knight, [ocrs-models](https://github.com/robertknight/ocrs-models), licensed CC-BY-SA 4.0. This software is based in part on the work of the Independent JPEG Group. Inspired by [PDFCraft](https://github.com/PDFCraftTool/pdfcraft) and [pdf-craft](https://github.com/oomol-lab/pdf-craft).
 
 ## License
 
