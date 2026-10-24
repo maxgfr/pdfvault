@@ -658,6 +658,13 @@ export const tools: Tool[] = [
         placeholder: '{ "items": [{ "type": "text", "page": 0, "x": 72, "y": 720, "text": "Hello" }] }',
         help: "Items, form values, blank pages and page order; images and font files given after the PDF are attachment 0, 1… On the command line, @file.json reads a file.",
       },
+      {
+        kind: "boolean",
+        name: "systemFonts",
+        label: "Use the fonts installed on this computer to keep the document's fonts",
+        default: true,
+        advanced: true,
+      },
       password,
     ],
     async run(engine, [pdf, ...attachments], o, progress) {
@@ -667,13 +674,25 @@ export const tools: Tool[] = [
       const steps = 2 + (boxes.length ? 1 : 0) + (order ? 1 : 0);
       progress?.(0, steps, "Preparing the edits");
       // Only the bundled fonts the text needs are loaded and passed along.
-      const plan = await engine.core<{ fonts: string[] }>("edit-plan", [pdf!], { ...edits, ...pw(o) });
+      const plan = await engine.core<{ fonts: string[]; wanted: { name: string }[] }>("edit-plan", [pdf!], { ...edits, ...pw(o) });
       const keys = plan.report.fonts.filter(isFontKey);
       const fonts = await Promise.all(keys.map((k) => engine.font(k)));
       const bundled = Object.fromEntries(keys.map((k, i) => [k, attachments.length + i]));
+      // A document font whose subset lacks characters: its complete, installed copy keeps the line in it.
+      const wanted = bool(o.systemFonts ?? true) ? plan.report.wanted : [];
+      const installed = (await Promise.all(wanted.map(async (w) => ({ name: w.name, bytes: await engine.systemFont(w.name) })))).filter(
+        (f): f is { name: string; bytes: Uint8Array } => f.bytes !== null,
+      );
+      const first = attachments.length + fonts.length;
+      const substitutes = [...(edits.substitutes ?? []), ...installed.map((f, i) => ({ name: f.name, file: first + i }))];
       progress?.(1, steps, "Applying the edits");
       type CoreReport = Omit<EditReport, "redactedPages" | "flattenedPages"> & { redactedPages: number[]; flatten: number[] };
-      const edited = await engine.core<CoreReport>("edit", [pdf!, ...attachments, ...fonts], { ...edits, bundled, ...pw(o) });
+      const edited = await engine.core<CoreReport>("edit", [pdf!, ...attachments, ...fonts, ...installed.map((f) => f.bytes)], {
+        ...edits,
+        bundled,
+        substitutes,
+        ...pw(o),
+      });
       let bytes = edited.files[0]!.bytes;
       let flattenedPages: number[] = [];
       if (boxes.length) {

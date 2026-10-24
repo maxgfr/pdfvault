@@ -18,8 +18,8 @@ beforeAll(async () => {
 });
 afterAll(() => rm(dir, { recursive: true, force: true }));
 
-function cli(args: string[], stdin?: Uint8Array) {
-  const p = Bun.spawnSync([...bin, ...args], { cwd: dir, stdin: stdin ?? "ignore" });
+function cli(args: string[], stdin?: Uint8Array, env: Record<string, string> = {}) {
+  const p = Bun.spawnSync([...bin, ...args], { cwd: dir, stdin: stdin ?? "ignore", env: { ...process.env, ...env } });
   return { code: p.exitCode, stdout: p.stdout, out: p.stdout.toString(), err: p.stderr.toString() };
 }
 
@@ -139,6 +139,24 @@ describe("running", () => {
     expect(cli(["edit", "text-3.pdf", "--ops", "@missing.json"]).code).toBe(2);
     expect(cli(["edit", "photo.jpg", "--ops", "{}"]).err).toContain("is not a PDF");
     expect(cli(["edit", "--help"]).out).toContain("pdfvault edit <pdf> [image or font file...]");
+  });
+
+  test("edit keeps a line in its font: the installed copy, else the subset plus a close font", () => {
+    // "Total 2025" in an embedded subset of Liberation Sans, as PDF producers write it.
+    const add = { items: [{ type: "text", page: 0, x: 72, y: 400, text: "Total 2025", size: 18 }] };
+    expect(cli(["edit", "text-3.pdf", "--ops", JSON.stringify(add), "-o", "subset.pdf"]).code).toBe(0);
+    const change = JSON.stringify({ items: [{ type: "replace", page: 0, find: "2025", text: "2026" }] });
+    const report = (args: string[], env: Record<string, string> = {}) => {
+      const r = cli(["edit", "subset.pdf", "--ops", change, "-o", "changed.pdf", "--force", "--json", ...args], undefined, env);
+      expect(r.code).toBe(0);
+      return JSON.parse(r.out).results[0].report;
+    };
+    // The "installed" fonts: the folder holding the full Liberation Sans.
+    const fonts = { PDFVAULT_FONT_DIRS: `${root}models/fonts` };
+    expect(report([], fonts)).toMatchObject({ substituted: 1, mixed: 0 });
+    expect(cli(["to-text", "changed.pdf", "--no-ocr", "-o", "-"]).out).toContain("Total 2026");
+    expect(report(["--no-system-fonts"], fonts)).toMatchObject({ substituted: 0, mixed: 1 });
+    expect(report([], { PDFVAULT_FONT_DIRS: "" })).toMatchObject({ substituted: 0, mixed: 1 });
   });
 
   test("edit writes text with a font file given after the PDF", async () => {

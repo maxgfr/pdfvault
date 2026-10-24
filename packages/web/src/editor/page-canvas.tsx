@@ -87,7 +87,7 @@ export function PageCanvas(p: Props) {
       const r = p.runs[Number(run)]!;
       const id = newId();
       const bg = sampleBackground(img.current, W, H, [r.x, r.y, r.x + r.w, r.y + r.h]);
-      const look = { family: r.family, bold: r.bold, italic: r.italic, bg, fontName: r.fontName, original: r.text, size: r.size, color: r.color };
+      const look = { family: r.family, bold: r.bold, italic: r.italic, bg, fontName: r.fontName, familyName: r.fontFamily, original: r.text, size: r.size, color: r.color };
       p.commit((d) => ({
         ...d,
         items: [
@@ -332,6 +332,7 @@ function ItemShape({ it, H, images, selected, editing }: { it: Item; H: number; 
     case "replace": {
       const size = it.size ?? it.h;
       const st = styleOf(it);
+      const ff = previewFamily(st.family, (it.font ?? "auto") === "auto" ? it.look?.familyName : undefined);
       ensurePreviewFont(st.family, st.bold, st.italic);
       const start = it.start ?? it.x;
       const base = it.baseline ?? it.y;
@@ -348,7 +349,7 @@ function ItemShape({ it, H, images, selected, editing }: { it: Item; H: number; 
               x={start}
               y={H - base}
               fontSize={size}
-              fontFamily={previewFamily(st.family)}
+              fontFamily={ff}
               fontWeight={st.bold ? 700 : 400}
               fontStyle={st.italic ? "italic" : "normal"}
               fill={it.color ?? "#000000"}
@@ -469,7 +470,7 @@ function TextEditor({
           top: `${((H - top) / H) * 100}%`,
           fs: `${size * scale}px`,
           color: note ? "#16181d" : (it.color ?? "#000000"),
-          ff: previewFamily(st.family),
+          ff: previewFamily(st.family, it.type === "replace" && (it.font ?? "auto") === "auto" ? it.look?.familyName : undefined),
           bg: it.look?.bg ?? "#ffffff",
         });
         if (el && document.activeElement !== el && !el.dataset.focused) {

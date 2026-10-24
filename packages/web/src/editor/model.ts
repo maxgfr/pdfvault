@@ -16,6 +16,8 @@ export interface Look {
   /** The page colour behind the original text. */
   bg: string;
   fontName: string;
+  /** The family an installed copy of the font has, for previews. */
+  familyName: string;
   /** The line as it was, to tell an untouched edit from a real one. */
   original: string;
   size: number;

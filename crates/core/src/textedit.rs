@@ -31,6 +31,8 @@ pub struct TextRun {
     pub color: String,
     /// The PDF font's name, for display.
     pub font_name: String,
+    /// Its family as an installed copy would be named, for previews.
+    pub font_family: String,
     pub hscale: f32,
     /// The text is known for every glyph and the line runs left to right.
     pub editable: bool,
@@ -53,7 +55,9 @@ pub fn runs_of(page: &Page, index: usize) -> Vec<TextRun> {
         let joins = last.is_some_and(|l| {
             let p = &page.glyphs[l];
             let gap = g.origin[0] - p.end[0];
-            p.font == g.font
+            (p.font == g.font
+                || (page.fonts[p.font].bold == page.fonts[g.font].bold
+                    && page.fonts[p.font].italic == page.fonts[g.font].italic))
                 && (p.size - g.size).abs() <= g.size * 0.02
                 && p.color == g.color
                 && (p.origin[1] - g.origin[1]).abs() <= g.size * 0.1
@@ -90,6 +94,7 @@ pub fn runs_of(page: &Page, index: usize) -> Vec<TextRun> {
                     italic: f.italic,
                     color: hex_color(g.color),
                     font_name: f.base.clone(),
+                    font_family: f.family_name.clone(),
                     hscale: g.hscale,
                     editable: text.is_some() && g.angle.abs() < 0.5 && !f.vertical(),
                 },
@@ -159,6 +164,14 @@ pub fn dominant_font(page: &Page, glyphs: &[usize]) -> Option<usize> {
 /// (and, for complete simple fonts, their whole encoding). `None` when a
 /// character is missing.
 pub fn encode_with(page: &Page, font: usize, text: &str) -> Option<Vec<(u32, usize)>> {
+    codes_for(page, font, text)?.into_iter().collect()
+}
+
+/// For each character of `text`, the code that writes it in font `font`, if
+/// the font has it: its whole encoding for complete simple fonts, every
+/// character its ToUnicode map names, and what this page shows with it.
+/// `None` when the font cannot be written to at all.
+pub fn codes_for(page: &Page, font: usize, text: &str) -> Option<Vec<Option<(u32, usize)>>> {
     let f: &Font = &page.fonts[font];
     if f.vertical() || f.uncertain {
         return None;
@@ -167,6 +180,11 @@ pub fn encode_with(page: &Page, font: usize, text: &str) -> Option<Vec<(u32, usi
     if let Some(all) = f.charset() {
         for (t, c) in all {
             map.entry(t).or_insert((c, 1));
+        }
+    }
+    for (t, c, len) in f.mapped_codes() {
+        if t.chars().count() == 1 {
+            map.entry(t).or_insert((c, len));
         }
     }
     for g in page.glyphs.iter().filter(|g| g.font == font) {
@@ -180,9 +198,11 @@ pub fn encode_with(page: &Page, font: usize, text: &str) -> Option<Vec<(u32, usi
     if f.kind == Kind::Simple && !map.contains_key(" ") && f.width(32, 1) > 0.0 {
         map.insert(" ".into(), (32, 1));
     }
-    text.chars()
-        .map(|c| map.get(c.to_string().as_str()).copied())
-        .collect()
+    Some(
+        text.chars()
+            .map(|c| map.get(c.to_string().as_str()).copied())
+            .collect(),
+    )
 }
 
 /// Name of a bundled font: "sans", "serif" or "mono", then "-regular",

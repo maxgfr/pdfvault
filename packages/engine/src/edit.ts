@@ -65,6 +65,9 @@ export interface EditOps {
   redaction?: "remove" | "flatten";
   /** Fonts (attachments) tried for characters a text's own font lacks. */
   fallbackFonts?: FontRef[];
+  /** Complete copies of the document's fonts, by PostScript name: a changed line whose
+   *  embedded subset lacks a character is redrawn in the copy. `file` is an attachment. */
+  substitutes?: { name: string; file: number }[];
   /** The output pages in order (0-based, blanks included); omitted = unchanged. */
   order?: { page: number; rotate?: number }[];
   /** Resolution pages turned into images are rendered at. */
@@ -101,6 +104,7 @@ export interface TextRun {
   italic: boolean;
   color: string;
   fontName: string;
+  fontFamily: string;
   hscale: number;
   editable: boolean;
 }
@@ -112,7 +116,10 @@ export interface EditReport {
   drawn: number;
   annotations: number;
   replaced: number;
+  /** Lines kept entirely in their font; partly (missing characters in another font); redrawn in an installed copy. */
   sameFont: number;
+  mixed: number;
+  substituted: number;
   covered: number;
   /** Pages with redactions (1-based), and those that had to become images. */
   redactedPages: number[];

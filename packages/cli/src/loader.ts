@@ -19,6 +19,7 @@ import serifItalic from "../../../models/fonts/LiberationSerif-Italic.ttf" with 
 import serifRegular from "../../../models/fonts/LiberationSerif-Regular.ttf" with { type: "file" };
 import { join } from "node:path";
 import type { FontFile, Loader } from "@pdfvault/engine";
+import { systemFont } from "./system-fonts.ts";
 
 // The npm bundle gets paths relative to itself, not to the working directory.
 const at = (path: string) => (path.startsWith(".") ? join(import.meta.dir, path) : path);
@@ -46,4 +47,5 @@ export const loader: Loader = {
   wasm: (name) => Bun.file(at(wasm[name])).arrayBuffer(),
   model: async (name) => new Uint8Array(await Bun.file(at(models[name])).arrayBuffer()),
   font: async (name) => new Uint8Array(await Bun.file(at(fonts[name])).arrayBuffer()),
+  systemFont,
 };

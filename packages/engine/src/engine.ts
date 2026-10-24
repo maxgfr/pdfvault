@@ -13,6 +13,8 @@ export interface Loader {
   wasm(name: ModuleName): Promise<WasmSource>;
   model(name: ModelName): Promise<Uint8Array>;
   font(name: FontFile): Promise<Uint8Array>;
+  /** A font installed on this computer with a face of this PostScript name (the CLI only). */
+  systemFont?(postscriptName: string): Promise<Uint8Array | null>;
 }
 
 export interface OutFile {
@@ -117,6 +119,15 @@ export class Engine {
       throw new EngineError("internal", `could not load the font ${BUNDLED_FONTS[key]}: ${String(e)}`);
     });
     return this.#fonts[key];
+  }
+
+  /** An installed font with a face of this PostScript name, when the loader can look. */
+  async systemFont(postscriptName: string): Promise<Uint8Array | null> {
+    try {
+      return (await this.#loader.systemFont?.(postscriptName)) ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /** Whether a module is already loaded (the site shows a hint before heavy loads). */

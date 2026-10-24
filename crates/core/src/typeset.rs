@@ -501,7 +501,11 @@ mod tests {
             .filter(|g| (g.origin[1] - 400.0).abs() < 0.5)
             .filter_map(|g| g.text.clone())
             .collect();
-        assert_eq!(read.replace(' ', ""), text.replace(' ', ""));
+        // The ﬁ ligature reads back as its letters.
+        assert_eq!(
+            read.replace(' ', ""),
+            text.replace(' ', "").replace('\u{FB01}', "fi")
+        );
         let first = p
             .glyphs
             .iter()
