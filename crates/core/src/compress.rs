@@ -1158,6 +1158,141 @@ pub fn rebuild_from_page_images(
     pdf::save(&mut doc)
 }
 
+/// Replace only the given pages (0-based) by full-page JPEGs, in place: the
+/// rest of the document keeps its text, links and outline. Everything the
+/// replaced pages held goes, annotations and form fields included, so the
+/// output carries nothing of them but pixels. Used by redaction.
+pub fn replace_pages_with_images(
+    input: &[u8],
+    password: Option<&str>,
+    pages: &[(usize, PageImage, Vec<u8>)],
+) -> Result<Vec<u8>> {
+    let mut doc = pdf::load(input, password)?;
+    let ids = pdf::page_ids(&doc);
+    let mut dropped: HashSet<ObjectId> = Default::default();
+    for (index, meta, jpeg) in pages {
+        let id = *ids
+            .get(*index)
+            .ok_or_else(|| Error::option(format!("page {} does not exist", index + 1)))?;
+        let b = pdf::page_box(&doc, id);
+        let (mut w, mut h) = (b[2] - b[0], b[3] - b[1]);
+        if pdf::page_rotation(&doc, id) % 180 == 90 {
+            std::mem::swap(&mut w, &mut h);
+        }
+        let img = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Image", "Width" => meta.width as i64, "Height" => meta.height as i64,
+                "ColorSpace" => if meta.gray { "DeviceGray" } else { "DeviceRGB" }, "BitsPerComponent" => 8,
+                "Filter" => "DCTDecode",
+            },
+            jpeg.clone(),
+        ));
+        let ops = format!("q {} 0 0 {} 0 0 cm /Im0 Do Q", pdf::n(w), pdf::n(h)).into_bytes();
+        let content = doc.add_object(Stream::new(Dictionary::new(), ops));
+        let page = doc.get_dictionary_mut(id)?;
+        if let Ok(Object::Array(annots)) = page.get(b"Annots") {
+            dropped.extend(annots.iter().filter_map(|a| a.as_reference().ok()));
+        }
+        for key in [
+            &b"Annots"[..],
+            b"CropBox",
+            b"TrimBox",
+            b"BleedBox",
+            b"ArtBox",
+            b"Rotate",
+            b"StructParents",
+            b"Thumb",
+            b"Group",
+            b"PieceInfo",
+            b"Metadata",
+        ] {
+            page.remove(key);
+        }
+        page.set("MediaBox", vec![0.into(), 0.into(), w.into(), h.into()]);
+        page.set("Contents", content);
+        page.set(
+            "Resources",
+            dictionary! { "XObject" => dictionary! { "Im0" => img } },
+        );
+    }
+    if !dropped.is_empty() {
+        prune_fields(&mut doc, &dropped);
+    }
+    pdf::save(&mut doc)
+}
+
+/// Drop form fields whose widgets were removed, so their values go too.
+fn prune_fields(doc: &mut Document, dropped: &HashSet<ObjectId>) {
+    fn keep(doc: &mut Document, id: ObjectId, dropped: &HashSet<ObjectId>, depth: usize) -> bool {
+        if dropped.contains(&id) || depth > 32 {
+            return false;
+        }
+        let kids: Option<Vec<Object>> = doc
+            .get_dictionary(id)
+            .ok()
+            .and_then(|d| d.get(b"Kids").ok())
+            .and_then(|k| k.as_array().ok())
+            .cloned();
+        let Some(kids) = kids else {
+            return true;
+        };
+        let left: Vec<Object> = kids
+            .into_iter()
+            .filter(|k| {
+                k.as_reference()
+                    .map(|r| keep(doc, r, dropped, depth + 1))
+                    .unwrap_or(true)
+            })
+            .collect();
+        let empty = left.is_empty();
+        if let Ok(d) = doc.get_dictionary_mut(id) {
+            d.set("Kids", left);
+        }
+        !empty
+    }
+    let Some(acro) = doc
+        .catalog()
+        .ok()
+        .and_then(|c| c.get(b"AcroForm").ok())
+        .cloned()
+    else {
+        return;
+    };
+    let mut form = match &acro {
+        Object::Reference(id) => match doc.get_dictionary(*id) {
+            Ok(d) => d.clone(),
+            Err(_) => return,
+        },
+        Object::Dictionary(d) => d.clone(),
+        _ => return,
+    };
+    let fields = form
+        .get(b"Fields")
+        .ok()
+        .and_then(|f| f.as_array().ok())
+        .cloned()
+        .unwrap_or_default();
+    let left: Vec<Object> = fields
+        .into_iter()
+        .filter(|f| {
+            f.as_reference()
+                .map(|r| keep(doc, r, dropped, 0))
+                .unwrap_or(true)
+        })
+        .collect();
+    form.set("Fields", left);
+    match acro {
+        Object::Reference(id) => {
+            doc.objects.insert(id, form.into());
+        }
+        _ => {
+            if let Ok(c) = doc.catalog_mut() {
+                c.set("AcroForm", form);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

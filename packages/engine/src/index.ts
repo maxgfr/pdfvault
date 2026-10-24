@@ -5,3 +5,5 @@ export type { ErrorCode } from "./errors.ts";
 export { categories, outputName, toolById, tools, withDefaults } from "./tools.ts";
 export type { Category, Field, InputKind, Options, Progress, Tool } from "./tools.ts";
 export type { CompressReport, ImageReport } from "./reports.ts";
+export { NOTE_SIZE, TEXT_ASCENT, TEXT_LINE, parseEdits, redactions } from "./edit.ts";
+export type { EditItem, EditOps, EditReport, FormField } from "./edit.ts";

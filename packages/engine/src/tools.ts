@@ -1,13 +1,14 @@
 // Every tool, declared once. The CLI derives its commands and flags from this
 // list and the site derives its forms, so both run identical code paths.
 
+import { parseEdits, redactions, type EditReport } from "./edit.ts";
 import type { Engine, OcrLine, OutFile, RunResult } from "./engine.ts";
 import { EngineError } from "./errors.ts";
 
 export type Category = "compress" | "organize" | "edit" | "security" | "convert" | "image";
 
 /** What a tool consumes. Batch tools run once per input file. */
-export type InputKind = "pdf" | "pdfs" | "image" | "images" | "pdf+image" | "pdf+pdf";
+export type InputKind = "pdf" | "pdfs" | "image" | "images" | "pdf+image" | "pdf+images" | "pdf+pdf";
 
 interface FieldBase {
   name: string;
@@ -604,6 +605,47 @@ export const tools: Tool[] = [
         pages: str(o.pages) ?? "last",
         ...pw(o),
       }),
+  },
+  {
+    id: "edit",
+    title: "Edit PDF",
+    summary: "Add text, shapes, drawings, images and signatures; fill forms, comment, redact, reorder and rotate pages.",
+    category: "edit",
+    input: "pdf+images",
+    aliases: ["annotate", "fill", "redact"],
+    fields: [
+      {
+        kind: "textarea",
+        name: "ops",
+        label: "Edits (JSON)",
+        required: true,
+        placeholder: '{ "items": [{ "type": "text", "page": 0, "x": 72, "y": 720, "text": "Hello" }] }',
+        help: "Items, form values, blank pages and page order; images given after the PDF are image 0, 1… On the command line, @file.json reads a file.",
+      },
+      password,
+    ],
+    async run(engine, [pdf, ...images], o, progress) {
+      const ops = parseEdits(required(o, "ops", "Edits"));
+      const boxes = redactions(ops.items);
+      const steps = 1 + (boxes.length ? 1 : 0) + (ops.order ? 1 : 0);
+      progress?.(0, steps, "Applying the edits");
+      const { order, redactDpi, ...core } = ops;
+      const edited = await engine.core<Omit<EditReport, "redactedPages">>("edit", [pdf!, ...images], { ...core, ...pw(o) });
+      let bytes = edited.files[0]!.bytes;
+      let redactedPages: number[] = [];
+      if (boxes.length) {
+        progress?.(1, steps, "Redacting");
+        const r = await engine.render<{ redactedPages: number[] }>("redact", [bytes], { pages: boxes, dpi: redactDpi ?? 150 });
+        bytes = r.files[0]!.bytes;
+        redactedPages = r.report.redactedPages;
+      }
+      if (order) {
+        progress?.(steps - 1, steps, "Arranging the pages");
+        bytes = (await engine.core("arrange", [bytes], { order: order.map((p) => ({ page: p.page, rotate: p.rotate ?? 0 })) })).files[0]!.bytes;
+      }
+      const report: EditReport = { ...edited.report, pages: order?.length ?? edited.report.pages, redactedPages };
+      return { files: [{ suffix: "edited", ext: "pdf", bytes }], report };
+    },
   },
   {
     id: "meta",

@@ -61,7 +61,7 @@ pub fn text_width(bytes: &[u8], size: f32, bold: bool) -> f32 {
     units as f32 * size / 1000.0
 }
 
-fn font_dict(bold: bool) -> Object {
+pub(crate) fn font_dict(bold: bool) -> Object {
     dictionary! {
         "Type" => "Font", "Subtype" => "Type1",
         "BaseFont" => if bold { "Helvetica-Bold" } else { "Helvetica" },
@@ -70,7 +70,7 @@ fn font_dict(bold: bool) -> Object {
     .into()
 }
 
-fn add_font(doc: &mut Document, page: ObjectId, bold: bool) -> Result<String> {
+pub(crate) fn add_font(doc: &mut Document, page: ObjectId, bold: bool) -> Result<String> {
     let name = pdf::add_resource(
         doc,
         page,
@@ -81,7 +81,11 @@ fn add_font(doc: &mut Document, page: ObjectId, bold: bool) -> Result<String> {
     Ok(String::from_utf8_lossy(&name).into_owned())
 }
 
-fn add_alpha(doc: &mut Document, page: ObjectId, opacity: f32) -> Result<Option<String>> {
+pub(crate) fn add_alpha(
+    doc: &mut Document,
+    page: ObjectId,
+    opacity: f32,
+) -> Result<Option<String>> {
     if opacity >= 0.999 {
         return Ok(None);
     }
@@ -115,7 +119,7 @@ pub(crate) fn visual_frame(doc: &Document, page: ObjectId) -> ([f32; 6], f32, f3
     }
 }
 
-fn cm(m: &[f32; 6]) -> String {
+pub(crate) fn cm(m: &[f32; 6]) -> String {
     format!(
         "{} {} {} {} {} {} cm\n",
         n(m[0]),
@@ -127,7 +131,7 @@ fn cm(m: &[f32; 6]) -> String {
     )
 }
 
-fn push_text(ops: &mut Vec<u8>, font: &str, size: f32, x: f32, y: f32, bytes: &[u8]) {
+pub(crate) fn push_text(ops: &mut Vec<u8>, font: &str, size: f32, x: f32, y: f32, bytes: &[u8]) {
     ops.extend(format!("BT /{font} {} Tf {} {} Td ", n(size), n(x), n(y)).into_bytes());
     ops.extend(pdf::pdf_string(bytes));
     ops.extend(b" Tj ET\n");

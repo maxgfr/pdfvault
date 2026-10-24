@@ -88,6 +88,9 @@ pub const OPS: &[&str] = &[
     "number",
     "header-footer",
     "stamp",
+    "edit",
+    "arrange",
+    "form-fields",
     "meta-read",
     "meta",
     "encrypt",
@@ -184,6 +187,21 @@ pub fn run(op: &str, inputs: Vec<Vec<u8>>, options: &str) -> Result<Output> {
         "stamp" => match inputs.as_slice() {
             [doc, img] => pdf("signed", stamp::stamp_image(doc, img, &parse(&options)?)?),
             _ => return Err(Error::option("stamp takes a PDF and an image")),
+        },
+        "edit" => {
+            let (bytes, report) = edit::edit(&inputs, &parse(&options)?)?;
+            Output {
+                files: vec![file("edited", "pdf", bytes)],
+                report: serde_json::to_value(report)?,
+            }
+        }
+        "arrange" => pdf(
+            "arranged",
+            pages::arrange(&one(&inputs, op)?, &parse(&options)?)?,
+        ),
+        "form-fields" => Output {
+            files: vec![],
+            report: json!({ "fields": forms::list_fields(&one(&inputs, op)?, pw)? }),
         },
         "meta-read" => {
             let doc = pdf::load(&one(&inputs, op)?, pw)?;

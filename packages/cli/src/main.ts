@@ -159,6 +159,7 @@ function checkKinds(tool: Tool, inputs: Input[]) {
       case "images":
         return "image";
       case "pdf+image":
+      case "pdf+images":
         return i === 0 ? "pdf" : "image";
     }
   };
@@ -249,6 +250,7 @@ Exit codes: 0 success, 1 a file failed, 2 usage error.`;
     image: "<image...>",
     images: "<image> [image...]",
     "pdf+image": "<pdf> <image>",
+    "pdf+images": "<pdf> [image...]",
     "pdf+pdf": "<pdf> <pdf>",
   };
   return `pdfvault ${tool.id} ${inputs[tool.input]} [options]
@@ -318,6 +320,13 @@ export async function main(argv: string[]): Promise<number> {
     for (const f of tool.fields) {
       if ("required" in f && f.required && p.options[f.name] === undefined) {
         throw new UsageError(`--${kebab(f.name)} is required (${f.label})`);
+      }
+      // Long values (the editor's JSON) can come from a file: --ops @edits.json.
+      const v = p.options[f.name];
+      if (f.kind === "textarea" && typeof v === "string" && v.startsWith("@")) {
+        const file = Bun.file(v.slice(1));
+        if (!(await file.exists())) throw new UsageError(`--${kebab(f.name)}: ${v.slice(1)}: no such file`);
+        p.options[f.name] = await file.text();
       }
     }
     inputs = await Promise.all((await expandInputs(p.positional)).map(readInput));

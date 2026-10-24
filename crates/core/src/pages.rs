@@ -188,6 +188,49 @@ pub fn select(input: &[u8], spec: &str, password: Option<&str>) -> Result<Vec<u8
     assemble(&mut [doc], &picks, keep_all)
 }
 
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ArrangeOptions {
+    /// The output pages, in order: which input page (0-based) and how many
+    /// degrees to turn it clockwise on top of its current rotation.
+    pub order: Vec<PagePick>,
+    pub password: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(default)]
+pub struct PagePick {
+    pub page: usize,
+    pub rotate: i64,
+}
+
+/// The editor's page strip in one go: reorder, drop, duplicate and rotate.
+pub fn arrange(input: &[u8], o: &ArrangeOptions) -> Result<Vec<u8>> {
+    if o.order.iter().any(|p| p.rotate % 90 != 0) {
+        return Err(Error::option("rotation must be a multiple of 90"));
+    }
+    let doc = pdf::load(input, o.password.as_deref())?;
+    let count = doc.get_pages().len();
+    let picks: Vec<(usize, usize)> = o.order.iter().map(|p| (0, p.page)).collect();
+    let mut seen: Vec<usize> = picks.iter().map(|p| p.1).collect();
+    seen.sort();
+    let keep_all = seen == (0..count).collect::<Vec<_>>();
+    let out = assemble(&mut [doc], &picks, keep_all)?;
+    if o.order.iter().all(|p| p.rotate % 360 == 0) {
+        return Ok(out);
+    }
+    let mut doc = pdf::load(&out, None)?;
+    for (id, pick) in pdf::page_ids(&doc).into_iter().zip(&o.order) {
+        if pick.rotate % 360 != 0 {
+            let r = pdf::page_rotation(&doc, id);
+            pdf::materialize(&mut doc, id);
+            doc.get_dictionary_mut(id)?
+                .set("Rotate", ((r + pick.rotate) % 360 + 360) % 360);
+        }
+    }
+    pdf::save(&mut doc)
+}
+
 pub fn delete(input: &[u8], spec: &str, password: Option<&str>) -> Result<Vec<u8>> {
     let doc = pdf::load(input, password)?;
     let count = doc.get_pages().len();
@@ -740,6 +783,33 @@ mod tests {
     use super::*;
     use crate::fixtures;
     use crate::testutil::qpdf_check;
+
+    #[test]
+    fn arrange_reorders_rotates_and_duplicates() {
+        let o = ArrangeOptions {
+            order: vec![
+                PagePick {
+                    page: 2,
+                    rotate: 90,
+                },
+                PagePick { page: 0, rotate: 0 },
+                PagePick {
+                    page: 0,
+                    rotate: 180,
+                },
+            ],
+            password: None,
+        };
+        let out = arrange(&fixtures::text_pdf(3), &o).unwrap();
+        qpdf_check(&out);
+        let doc = pdf::load(&out, None).unwrap();
+        let ids = pdf::page_ids(&doc);
+        assert_eq!(ids.len(), 3);
+        let rot: Vec<i64> = ids.iter().map(|id| pdf::page_rotation(&doc, *id)).collect();
+        assert_eq!(rot, vec![90, 0, 180]);
+        assert!(doc.extract_text(&[1]).unwrap().contains('3'));
+        assert!(arrange(&fixtures::text_pdf(1), &ArrangeOptions::default()).is_err());
+    }
 
     #[test]
     fn merge_two() {

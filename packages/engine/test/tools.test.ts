@@ -160,6 +160,45 @@ describe("edit", () => {
     const info = await run("info", [await fixture("photo.pdf")]);
     expect(info.report).toMatchObject({ pages: 2, images: 3 });
   });
+
+  test("editor: items, forms, blanks, redaction and page order in one run", async () => {
+    const text = async (pdf: Uint8Array, page: number) =>
+      (await engine.render<{ pages: { spans: { text: string }[] }[] }>("text", [pdf], { pages: String(page) })).report.pages[0]!.spans
+        .map((s) => s.text)
+        .join("")
+        .replace(/\s+/g, "");
+    const ops = {
+      blanks: [{ size: "a4" }],
+      items: [
+        { type: "text", page: 0, x: 72, y: 760, text: "Added by the editor", size: 16 },
+        { type: "image", page: 1, x: 300, y: 80, w: 160, h: 64, image: 0 },
+        { type: "note", page: 0, x: 500, y: 760, text: "Check this" },
+        { type: "highlight", page: 1, x: 72, y: 700, w: 120, h: 14 },
+        { type: "redact", page: 2, x: 0, y: 0, w: 612, h: 792 },
+        { type: "text", page: 3, x: 72, y: 800, text: "On the blank page" },
+      ],
+      order: [{ page: 3 }, { page: 0, rotate: 90 }, { page: 2 }, { page: 1 }],
+    };
+    const r = await run("edit", [await fixture("text-3.pdf"), await fixture("signature.png")], { ops: JSON.stringify(ops) });
+    const out = firstPdf(r);
+    await qpdfCheck(out);
+    expect(r.report).toMatchObject({ pages: 4, blanks: 1, drawn: 3, annotations: 2, redactedPages: [3] });
+    expect(await pages(out)).toBe(4);
+    expect(await text(out, 1)).toContain("Ontheblankpage");
+    expect(await text(out, 2)).toContain("Addedbytheeditor");
+    expect(await text(out, 3)).toBe("");
+
+    const fields = await engine.core<{ fields: { name: string; kind: string }[] }>("form-fields", [await fixture("form.pdf")]);
+    expect(fields.report.fields.map((f) => f.kind).sort()).toEqual(["checkbox", "text"]);
+    const filled = await run("edit", [await fixture("form.pdf")], { ops: JSON.stringify({ fields: { name: "Grace", agree: false } }) });
+    const after = await engine.core<{ fields: { name: string; value: string }[] }>("form-fields", [firstPdf(filled)]);
+    expect(Object.fromEntries(after.report.fields.map((f) => [f.name, f.value]))).toEqual({ name: "Grace", agree: "Off" });
+
+    await expect(run("edit", [await fixture("text-3.pdf")], { ops: "{nope" })).rejects.toMatchObject({ code: "invalid_option" });
+    await expect(run("edit", [await fixture("text-3.pdf")], { ops: JSON.stringify({ items: [{ type: "text", page: 9, text: "x" }] }) })).rejects.toMatchObject({
+      code: "invalid_option",
+    });
+  });
 });
 
 describe("security", () => {
