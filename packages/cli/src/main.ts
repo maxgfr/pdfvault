@@ -147,6 +147,10 @@ async function readInput(path: string): Promise<Input> {
 }
 
 const isPdf = (b: Uint8Array) => new TextDecoder().decode(b.subarray(0, 1024)).includes("%PDF-");
+const isImage = (b: Uint8Array) => {
+  const at = (i: number, s: string) => [...s].every((c, j) => b[i + j] === c.charCodeAt(0));
+  return (b[0] === 0xff && b[1] === 0xd8) || at(0, "\x89PNG") || at(0, "GIF8") || at(0, "BM") || (at(0, "RIFF") && at(8, "WEBP"));
+};
 
 function checkKinds(tool: Tool, inputs: Input[]) {
   const want = (i: number) => {
@@ -158,6 +162,8 @@ function checkKinds(tool: Tool, inputs: Input[]) {
       case "image":
       case "images":
         return "image";
+      case "mixed":
+        return "any";
       case "pdf+image":
       case "pdf+images":
         return i === 0 ? "pdf" : "image";
@@ -165,6 +171,7 @@ function checkKinds(tool: Tool, inputs: Input[]) {
   };
   inputs.forEach((input, i) => {
     const kind = want(i);
+    if (kind === "any" && !isPdf(input.bytes) && !isImage(input.bytes)) throw new UsageError(`${input.name} is neither a PDF nor an image`);
     if (kind === "pdf" && !isPdf(input.bytes)) throw new UsageError(`${input.name} is not a PDF`);
     if (kind === "image" && isPdf(input.bytes)) throw new UsageError(`${input.name} is a PDF; ${tool.id} expects images`);
   });
@@ -249,6 +256,7 @@ Exit codes: 0 success, 1 a file failed, 2 usage error.`;
     pdfs: "<pdf> <pdf> [pdf...]",
     image: "<image...>",
     images: "<image> [image...]",
+    mixed: "<pdf|image> [pdf|image...]",
     "pdf+image": "<pdf> <image>",
     "pdf+images": "<pdf> [image...]",
     "pdf+pdf": "<pdf> <pdf>",

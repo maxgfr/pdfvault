@@ -16,7 +16,22 @@ const cases: { id: string; title: string; files: string[]; ui: Record<string, st
   { id: "pdf2img", title: "PDF to images", files: ["text-3.pdf"], ui: { Resolution: "50" }, args: ["--dpi", "50"] },
   { id: "img-compress", title: "Compress images", files: ["photo.jpg"], ui: { "JPEG quality": "40" }, args: ["--quality", "40"] },
   { id: "to-md", title: "PDF to Markdown", files: ["text-3.pdf"], ui: {}, args: [] },
+  { id: "combine", title: "Combine into one PDF", files: ["photo.jpg", "text-3.pdf"], ui: {}, args: [] },
 ];
+
+test("parity: edit (the editor's page strip)", async ({ page }) => {
+  await page.goto("./#/edit");
+  await page.getByLabel("PDF to edit").setInputFiles(fixture("text-3.pdf"));
+  const order = page.getByRole("navigation", { name: "Page order" });
+  await order.getByRole("button", { name: "Turn page 1 right" }).click();
+  await order.getByRole("button", { name: "Delete page 3" }).click();
+  await page.getByRole("button", { name: "Save PDF" }).click();
+  const [dl] = await Promise.all([page.waitForEvent("download"), page.locator(".ed-result").getByRole("button", { name: "Download" }).click()]);
+  const bytes = new Uint8Array(await readFile((await dl.path())!));
+  const ops = JSON.stringify({ order: [{ page: 0, rotate: 90 }, { page: 1 }] });
+  const out = execFileSync(cli[0]!, [...cli.slice(1), "edit", fixture("text-3.pdf"), "--ops", ops, "-o", "-"]);
+  expect(sha256(bytes)).toBe(sha256(new Uint8Array(out)));
+});
 
 for (const c of cases) {
   test(`parity: ${c.id}`, async ({ page }) => {

@@ -1,6 +1,6 @@
 ---
 name: pdfvault
-description: Compress, merge, split, reorder, protect, OCR and convert PDFs, and compress, resize, convert or strip metadata from images, locally with the pdfvault CLI. Use when the user asks to shrink a PDF (often under a target size), assemble or cut pages, add or remove a password, make a scan searchable, extract text, Markdown or EPUB from a PDF, or batch-process images, and the files must stay on their machine.
+description: Compress, merge, split, reorder, edit (text, signatures, form filling, redaction, comments), protect, OCR and convert PDFs, and compress, resize, convert or strip metadata from images, locally with the pdfvault CLI. Use when the user asks to shrink a PDF (often under a target size), assemble or cut pages, add or remove a password, make a scan searchable, extract text, Markdown or EPUB from a PDF, or batch-process images, and the files must stay on their machine.
 ---
 
 # pdfvault
@@ -38,7 +38,34 @@ Keep only the final file: delete the outputs of earlier rungs. Report the before
 
 ## Other tools
 
-Each command's `--help` is authoritative. The common ones: `merge a.pdf b.pdf -o all.pdf`; `split --every 1` or `--mode ranges --ranges 1-3,4-` or `--mode bookmarks`; `extract --pages 2-5`; `delete --pages 1`; `reorder --order 3,1,2`; `rotate --angle 90 --pages 2`; `encrypt --user-password …` (AES-256); `decrypt --password …`; `ocr scan.pdf` (adds an invisible text layer; pages that already have text are skipped unless `--force`); `to-md`, `to-text`, `to-epub` (OCR on pages without text); `img compress|resize|convert|strip`.
+Each command's `--help` is authoritative. The common ones: `merge a.pdf b.pdf -o all.pdf`; `combine scan.pdf photo.jpg receipt.png -o all.pdf` (PDFs and images in the given order, each image a page); `split --every 1` or `--mode ranges --ranges 1-3,4-` or `--mode bookmarks`; `extract --pages 2-5`; `delete --pages 1`; `reorder --order 3,1,2`; `rotate --angle 90 --pages 2`; `encrypt --user-password …` (AES-256); `decrypt --password …`; `ocr scan.pdf` (adds an invisible text layer; pages that already have text are skipped unless `--force`); `to-md`, `to-text`, `to-epub` (OCR on pages without text); `img compress|resize|convert|strip`.
+
+## Edit a PDF
+
+`edit in.pdf [image...] --ops @edits.json` applies one JSON document (inline JSON works too). Coordinates are points in the page as displayed, origin at the bottom-left; `page` is 0-based and counts the input's pages, then the `blanks` it appends. Images given after the PDF are `"image": 0`, `1`…
+
+```json
+{
+  "fields": { "name": "Ada Lovelace", "agree": true },
+  "flattenFields": false,
+  "blanks": [{ "size": "a4" }],
+  "items": [
+    { "type": "text", "page": 0, "x": 72, "y": 720, "text": "Approved\nby Ada", "size": 14, "color": "#111111", "bold": true },
+    { "type": "rect", "page": 0, "x": 70, "y": 600, "w": 200, "h": 20, "fill": "#ffffff" },
+    { "type": "image", "page": 1, "x": 360, "y": 72, "w": 160, "h": 60, "image": 0 },
+    { "type": "ink", "page": 1, "paths": [[100, 100, 140, 120, 180, 100]], "color": "#1a2b6d", "lineWidth": 2 },
+    { "type": "highlight", "page": 0, "x": 72, "y": 690, "w": 200, "h": 14 },
+    { "type": "note", "page": 0, "x": 520, "y": 760, "text": "Check this" },
+    { "type": "redact", "page": 2, "x": 72, "y": 500, "w": 300, "h": 40 }
+  ],
+  "order": [{ "page": 3 }, { "page": 0, "rotate": 90 }, { "page": 1 }]
+}
+```
+
+- Text items: `x`, `y` is the top-left of the text box; Helvetica, Latin-1 only. A white `rect` is a whiteout; existing text cannot be retyped, only covered.
+- `highlight` and `note` become real annotations; everything else is drawn into the page.
+- `redact` rasterizes each page it touches: the text there is gone for good, and so is the rest of that page's text. Run `ocr` afterwards if it must stay searchable.
+- Field names come from the form; filling an unknown name fails. `order` drops, repeats and turns pages (`rotate` in degrees clockwise).
 
 ## Limits
 

@@ -8,7 +8,8 @@ import { EngineError } from "./errors.ts";
 export type Category = "compress" | "organize" | "edit" | "security" | "convert" | "image";
 
 /** What a tool consumes. Batch tools run once per input file. */
-export type InputKind = "pdf" | "pdfs" | "image" | "images" | "pdf+image" | "pdf+images" | "pdf+pdf";
+/** `mixed` takes PDFs and images in any order. */
+export type InputKind = "pdf" | "pdfs" | "image" | "images" | "mixed" | "pdf+image" | "pdf+images" | "pdf+pdf";
 
 interface FieldBase {
   name: string;
@@ -84,6 +85,44 @@ const pagesField = (label = "Pages", help = "For example 1-3,7,10-. Empty means 
 });
 
 const pw = (o: Options) => ({ password: str(o.password) });
+
+const isPdf = (b: Uint8Array) => new TextDecoder().decode(b.subarray(0, 1024)).includes("%PDF-");
+
+/** How images are laid out on pages (Images to PDF, Combine). */
+const imagePageFields: Field[] = [
+  {
+    kind: "select",
+    name: "pageSize",
+    label: "Page size",
+    default: "a4",
+    choices: [
+      { value: "a4", label: "A4" },
+      { value: "letter", label: "US Letter" },
+      { value: "fit", label: "Fit each image" },
+    ],
+  },
+  {
+    kind: "select",
+    name: "orientation",
+    label: "Orientation",
+    default: "auto",
+    choices: [
+      { value: "auto", label: "Follow each image" },
+      { value: "portrait", label: "Portrait" },
+      { value: "landscape", label: "Landscape" },
+    ],
+    when: { field: "pageSize", is: ["a4", "letter"] },
+  },
+  { kind: "number", name: "margin", label: "Margin", unit: "pt", min: 0, max: 200, default: 24, when: { field: "pageSize", is: ["a4", "letter"] } },
+  { kind: "number", name: "dpi", label: "Image resolution", unit: "DPI", min: 10, max: 2400, default: 150, when: { field: "pageSize", is: ["fit"] } },
+];
+
+const imagePageOptions = (o: Options) => ({
+  pageSize: str(o.pageSize) ?? "a4",
+  orientation: str(o.orientation) ?? "auto",
+  margin: num(o.margin) ?? 24,
+  dpi: num(o.dpi) ?? 150,
+});
 
 const positions = [
   { value: "bottom-center", label: "Bottom center" },
@@ -217,6 +256,34 @@ export const tools: Tool[] = [
     input: "pdfs",
     fields: [password],
     run: (engine, inputs, o) => engine.core("merge", inputs, pw(o)),
+  },
+  {
+    id: "combine",
+    title: "Combine into one PDF",
+    summary: "PDFs and photos together, in the order given: each image becomes a page.",
+    category: "organize",
+    input: "mixed",
+    aliases: ["join"],
+    fields: [...imagePageFields, password],
+    async run(engine, inputs, o) {
+      // Runs of consecutive images become one PDF each, then everything is merged.
+      const parts: Uint8Array[] = [];
+      let images: Uint8Array[] = [];
+      const flush = async () => {
+        if (images.length) parts.push((await engine.core("img2pdf", images, imagePageOptions(o))).files[0]!.bytes);
+        images = [];
+      };
+      for (const b of inputs) {
+        if (isPdf(b)) {
+          await flush();
+          parts.push(b);
+        } else images.push(b);
+      }
+      await flush();
+      const out = parts.length === 1 ? parts[0]! : (await engine.core("merge", parts, pw(o))).files[0]!.bytes;
+      const pages = (await engine.core<{ pages: number }>("info", [out])).report.pages;
+      return { files: [{ suffix: "combined", ext: "pdf", bytes: out }], report: { pages, inputs: inputs.length } };
+    },
   },
   {
     id: "split",
@@ -403,40 +470,8 @@ export const tools: Tool[] = [
     summary: "Turn JPEG, PNG, WebP, GIF or BMP images into one PDF. JPEGs go in untouched.",
     category: "convert",
     input: "images",
-    fields: [
-      {
-        kind: "select",
-        name: "pageSize",
-        label: "Page size",
-        default: "a4",
-        choices: [
-          { value: "a4", label: "A4" },
-          { value: "letter", label: "US Letter" },
-          { value: "fit", label: "Fit each image" },
-        ],
-      },
-      {
-        kind: "select",
-        name: "orientation",
-        label: "Orientation",
-        default: "auto",
-        choices: [
-          { value: "auto", label: "Follow each image" },
-          { value: "portrait", label: "Portrait" },
-          { value: "landscape", label: "Landscape" },
-        ],
-        when: { field: "pageSize", is: ["a4", "letter"] },
-      },
-      { kind: "number", name: "margin", label: "Margin", unit: "pt", min: 0, max: 200, default: 24, when: { field: "pageSize", is: ["a4", "letter"] } },
-      { kind: "number", name: "dpi", label: "Image resolution", unit: "DPI", min: 10, max: 2400, default: 150, when: { field: "pageSize", is: ["fit"] } },
-    ],
-    run: (engine, inputs, o) =>
-      engine.core("img2pdf", inputs, {
-        pageSize: str(o.pageSize) ?? "a4",
-        orientation: str(o.orientation) ?? "auto",
-        margin: num(o.margin) ?? 24,
-        dpi: num(o.dpi) ?? 150,
-      }),
+    fields: imagePageFields,
+    run: (engine, inputs, o) => engine.core("img2pdf", inputs, imagePageOptions(o)),
   },
   {
     id: "pdf2img",

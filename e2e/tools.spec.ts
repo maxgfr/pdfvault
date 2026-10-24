@@ -8,6 +8,7 @@ type Case = { id: string; title: string; slots: string[][]; fill?: Record<string
 const cases: Case[] = [
   { id: "compress", title: "Compress PDF", slots: [["photo.pdf"]], fill: { Level: "strong" }, expect: "pdf" },
   { id: "merge", title: "Merge PDFs", slots: [["text-3.pdf", "text-5.pdf"]], expect: "pdf" },
+  { id: "combine", title: "Combine into one PDF", slots: [["photo.jpg", "text-3.pdf"]], expect: "pdf" },
   { id: "split", title: "Split PDF", slots: [["text-5.pdf"]], fill: { "Pages per file": "2" }, expect: "pdf" },
   { id: "extract", title: "Extract pages", slots: [["text-5.pdf"]], fill: { "Pages to keep": "2-3" }, expect: "pdf" },
   { id: "delete", title: "Delete pages", slots: [["text-5.pdf"]], fill: { "Pages to delete": "1" }, expect: "pdf" },
@@ -53,7 +54,8 @@ const magic: Record<string, (b: Uint8Array) => boolean> = {
 test("every tool in the registry is covered", async ({ page }) => {
   await page.goto("./");
   const ids = await page.locator(".card").evaluateAll((as) => as.map((a) => (a as HTMLAnchorElement).hash.slice(2)));
-  expect(ids.sort()).toEqual(cases.map((c) => c.id).sort());
+  // The editor has its own page and its own spec (editor.spec.ts).
+  expect(ids.sort()).toEqual([...cases.map((c) => c.id), "edit"].sort());
 });
 
 for (const c of cases) {

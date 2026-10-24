@@ -23,6 +23,22 @@ const PATHS: Record<string, string> = {
   view: "M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7-9.5-7-9.5-7zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
   minus: "M5 12h14",
   plus: "M12 5v14M5 12h14",
+  upload: "M12 16V4M7 9l5-5 5 5M5 20h14",
+  cursor: "M5 3l14 7-6 2-2 6z",
+  text: "M5 6V4h14v2M12 4v16M9 20h6",
+  square: "M4 5h16v14H4z",
+  whiteout: "M4 5h16v14H4zM8 9h8M8 13h5",
+  highlight: "M9 15l-4 4h6l2-2M8 13l7-7 3 3-7 7zM4 21h16",
+  pen: "M3 17c3-4 5-1 7-4s3-8 6-8c2 0 3 2 2 4s-6 9-9 12M3 21h18",
+  note: "M5 4h14v11l-5 5H5zM14 20v-5h5M8 9h8M8 12h5",
+  signature: "M3 17c2-1 3-7 5-7s1 6 3 6 2-4 4-4 1 3 3 3 2-1 3-2M3 21h18",
+  redact: "M4 6h16v5H4zM4 15h10v3H4z",
+  undo: "M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3",
+  redo: "M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3",
+  "rotate-cw": "M20 11a8 8 0 1 1-2.3-5.7M20 4v5h-5",
+  "rotate-ccw": "M4 11a8 8 0 1 0 2.3-5.7M4 4v5h5",
+  copy: "M8 8h12v12H8zM16 8V4H4v12h4",
+  page: "M6 3h12v18H6z",
 };
 
 export function Icon({ name, label }: { name: string; label?: string }) {

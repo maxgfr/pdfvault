@@ -123,6 +123,13 @@ describe("running", () => {
     expect(outs).toEqual(["text-5-part-1-2.pdf", "text-5-part-3-4.pdf", "text-5-part-5-5.pdf"]);
   });
 
+  test("combine takes PDFs and images in any order", () => {
+    const r = cli(["combine", "photo.jpg", "text-3.pdf", "-o", "all.pdf", "--json"]);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out).results[0].report).toMatchObject({ pages: 4 });
+    expect(cli(["combine", "edits-missing.txt"]).code).toBe(2);
+  });
+
   test("edit reads its JSON from @file and takes images after the PDF", async () => {
     const ops = { items: [{ type: "image", page: 0, x: 72, y: 72, w: 120, h: 80, image: 0 }], order: [{ page: 1 }, { page: 0 }] };
     await Bun.write(`${dir}/edits.json`, JSON.stringify(ops));

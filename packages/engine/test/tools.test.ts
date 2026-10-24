@@ -92,6 +92,15 @@ describe("organize", () => {
     await qpdfCheck(firstPdf(r));
   });
 
+  test("combine PDFs and images in order", async () => {
+    const r = await run("combine", [await fixture("photo.jpg"), await fixture("signature.png"), await fixture("text-3.pdf"), await fixture("photo.png")]);
+    const out = firstPdf(r);
+    await qpdfCheck(out);
+    expect(r.report).toMatchObject({ pages: 6, inputs: 4 });
+    const single = firstPdf(await run("combine", [await fixture("photo.jpg")]));
+    expect(await pages(single)).toBe(1);
+  });
+
   test("split by every, ranges and bookmarks", async () => {
     const five = await fixture("text-5.pdf");
     expect((await run("split", [five], { mode: "every", every: 2 })).files.map((f) => f.suffix)).toEqual(["part-1-2", "part-3-4", "part-5-5"]);
