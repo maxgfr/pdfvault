@@ -384,6 +384,21 @@ pub fn form_pdf() -> Vec<u8> {
     b.finish()
 }
 
+/// Whether any stream of the PDF, once decoded, contains `needle`. Text drawn
+/// inside form XObjects (field appearances) is invisible to `extract_text`.
+pub fn any_stream_contains(pdf_bytes: &[u8], needle: &[u8]) -> bool {
+    let doc = crate::pdf::load(pdf_bytes, None).unwrap();
+    doc.objects
+        .values()
+        .filter_map(|o| o.as_stream().ok())
+        .any(|s| {
+            let data = s
+                .decompressed_content()
+                .unwrap_or_else(|_| s.content.clone());
+            data.windows(needle.len()).any(|w| w == needle)
+        })
+}
+
 /// Bytes that start like a PDF and then fall apart.
 pub fn corrupt_pdf() -> Vec<u8> {
     let mut v = text_pdf(2);

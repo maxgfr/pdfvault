@@ -1,13 +1,15 @@
 // Every tool, declared once. The CLI derives its commands and flags from this
 // list and the site derives its forms, so both run identical code paths.
 
+import { parseEdits, redactions, type EditReport } from "./edit.ts";
 import type { Engine, OcrLine, OutFile, RunResult } from "./engine.ts";
 import { EngineError } from "./errors.ts";
 
 export type Category = "compress" | "organize" | "edit" | "security" | "convert" | "image";
 
 /** What a tool consumes. Batch tools run once per input file. */
-export type InputKind = "pdf" | "pdfs" | "image" | "images" | "pdf+image" | "pdf+pdf";
+/** `mixed` takes PDFs and images in any order. */
+export type InputKind = "pdf" | "pdfs" | "image" | "images" | "mixed" | "pdf+image" | "pdf+images" | "pdf+pdf";
 
 interface FieldBase {
   name: string;
@@ -83,6 +85,44 @@ const pagesField = (label = "Pages", help = "For example 1-3,7,10-. Empty means 
 });
 
 const pw = (o: Options) => ({ password: str(o.password) });
+
+const isPdf = (b: Uint8Array) => new TextDecoder().decode(b.subarray(0, 1024)).includes("%PDF-");
+
+/** How images are laid out on pages (Images to PDF, Combine). */
+const imagePageFields: Field[] = [
+  {
+    kind: "select",
+    name: "pageSize",
+    label: "Page size",
+    default: "a4",
+    choices: [
+      { value: "a4", label: "A4" },
+      { value: "letter", label: "US Letter" },
+      { value: "fit", label: "Fit each image" },
+    ],
+  },
+  {
+    kind: "select",
+    name: "orientation",
+    label: "Orientation",
+    default: "auto",
+    choices: [
+      { value: "auto", label: "Follow each image" },
+      { value: "portrait", label: "Portrait" },
+      { value: "landscape", label: "Landscape" },
+    ],
+    when: { field: "pageSize", is: ["a4", "letter"] },
+  },
+  { kind: "number", name: "margin", label: "Margin", unit: "pt", min: 0, max: 200, default: 24, when: { field: "pageSize", is: ["a4", "letter"] } },
+  { kind: "number", name: "dpi", label: "Image resolution", unit: "DPI", min: 10, max: 2400, default: 150, when: { field: "pageSize", is: ["fit"] } },
+];
+
+const imagePageOptions = (o: Options) => ({
+  pageSize: str(o.pageSize) ?? "a4",
+  orientation: str(o.orientation) ?? "auto",
+  margin: num(o.margin) ?? 24,
+  dpi: num(o.dpi) ?? 150,
+});
 
 const positions = [
   { value: "bottom-center", label: "Bottom center" },
@@ -216,6 +256,34 @@ export const tools: Tool[] = [
     input: "pdfs",
     fields: [password],
     run: (engine, inputs, o) => engine.core("merge", inputs, pw(o)),
+  },
+  {
+    id: "combine",
+    title: "Combine into one PDF",
+    summary: "PDFs and photos together, in the order given: each image becomes a page.",
+    category: "organize",
+    input: "mixed",
+    aliases: ["join"],
+    fields: [...imagePageFields, password],
+    async run(engine, inputs, o) {
+      // Runs of consecutive images become one PDF each, then everything is merged.
+      const parts: Uint8Array[] = [];
+      let images: Uint8Array[] = [];
+      const flush = async () => {
+        if (images.length) parts.push((await engine.core("img2pdf", images, imagePageOptions(o))).files[0]!.bytes);
+        images = [];
+      };
+      for (const b of inputs) {
+        if (isPdf(b)) {
+          await flush();
+          parts.push(b);
+        } else images.push(b);
+      }
+      await flush();
+      const out = parts.length === 1 ? parts[0]! : (await engine.core("merge", parts, pw(o))).files[0]!.bytes;
+      const pages = (await engine.core<{ pages: number }>("info", [out])).report.pages;
+      return { files: [{ suffix: "combined", ext: "pdf", bytes: out }], report: { pages, inputs: inputs.length } };
+    },
   },
   {
     id: "split",
@@ -402,40 +470,8 @@ export const tools: Tool[] = [
     summary: "Turn JPEG, PNG, WebP, GIF or BMP images into one PDF. JPEGs go in untouched.",
     category: "convert",
     input: "images",
-    fields: [
-      {
-        kind: "select",
-        name: "pageSize",
-        label: "Page size",
-        default: "a4",
-        choices: [
-          { value: "a4", label: "A4" },
-          { value: "letter", label: "US Letter" },
-          { value: "fit", label: "Fit each image" },
-        ],
-      },
-      {
-        kind: "select",
-        name: "orientation",
-        label: "Orientation",
-        default: "auto",
-        choices: [
-          { value: "auto", label: "Follow each image" },
-          { value: "portrait", label: "Portrait" },
-          { value: "landscape", label: "Landscape" },
-        ],
-        when: { field: "pageSize", is: ["a4", "letter"] },
-      },
-      { kind: "number", name: "margin", label: "Margin", unit: "pt", min: 0, max: 200, default: 24, when: { field: "pageSize", is: ["a4", "letter"] } },
-      { kind: "number", name: "dpi", label: "Image resolution", unit: "DPI", min: 10, max: 2400, default: 150, when: { field: "pageSize", is: ["fit"] } },
-    ],
-    run: (engine, inputs, o) =>
-      engine.core("img2pdf", inputs, {
-        pageSize: str(o.pageSize) ?? "a4",
-        orientation: str(o.orientation) ?? "auto",
-        margin: num(o.margin) ?? 24,
-        dpi: num(o.dpi) ?? 150,
-      }),
+    fields: imagePageFields,
+    run: (engine, inputs, o) => engine.core("img2pdf", inputs, imagePageOptions(o)),
   },
   {
     id: "pdf2img",
@@ -604,6 +640,47 @@ export const tools: Tool[] = [
         pages: str(o.pages) ?? "last",
         ...pw(o),
       }),
+  },
+  {
+    id: "edit",
+    title: "Edit PDF",
+    summary: "Add text, shapes, drawings, images and signatures; fill forms, comment, redact, reorder and rotate pages.",
+    category: "edit",
+    input: "pdf+images",
+    aliases: ["annotate", "fill", "redact"],
+    fields: [
+      {
+        kind: "textarea",
+        name: "ops",
+        label: "Edits (JSON)",
+        required: true,
+        placeholder: '{ "items": [{ "type": "text", "page": 0, "x": 72, "y": 720, "text": "Hello" }] }',
+        help: "Items, form values, blank pages and page order; images given after the PDF are image 0, 1… On the command line, @file.json reads a file.",
+      },
+      password,
+    ],
+    async run(engine, [pdf, ...images], o, progress) {
+      const ops = parseEdits(required(o, "ops", "Edits"));
+      const boxes = redactions(ops.items);
+      const steps = 1 + (boxes.length ? 1 : 0) + (ops.order ? 1 : 0);
+      progress?.(0, steps, "Applying the edits");
+      const { order, redactDpi, ...core } = ops;
+      const edited = await engine.core<Omit<EditReport, "redactedPages">>("edit", [pdf!, ...images], { ...core, ...pw(o) });
+      let bytes = edited.files[0]!.bytes;
+      let redactedPages: number[] = [];
+      if (boxes.length) {
+        progress?.(1, steps, "Redacting");
+        const r = await engine.render<{ redactedPages: number[] }>("redact", [bytes], { pages: boxes, dpi: redactDpi ?? 150 });
+        bytes = r.files[0]!.bytes;
+        redactedPages = r.report.redactedPages;
+      }
+      if (order) {
+        progress?.(steps - 1, steps, "Arranging the pages");
+        bytes = (await engine.core("arrange", [bytes], { order: order.map((p) => ({ page: p.page, rotate: p.rotate ?? 0 })) })).files[0]!.bytes;
+      }
+      const report: EditReport = { ...edited.report, pages: order?.length ?? edited.report.pages, redactedPages };
+      return { files: [{ suffix: "edited", ext: "pdf", bytes }], report };
+    },
   },
   {
     id: "meta",

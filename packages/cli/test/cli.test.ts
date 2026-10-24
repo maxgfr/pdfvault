@@ -122,6 +122,24 @@ describe("running", () => {
     const outs = JSON.parse(r.out).results[0].outputs.map((o: { path: string }) => o.path.split("/").pop());
     expect(outs).toEqual(["text-5-part-1-2.pdf", "text-5-part-3-4.pdf", "text-5-part-5-5.pdf"]);
   });
+
+  test("combine takes PDFs and images in any order", () => {
+    const r = cli(["combine", "photo.jpg", "text-3.pdf", "-o", "all.pdf", "--json"]);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out).results[0].report).toMatchObject({ pages: 4 });
+    expect(cli(["combine", "edits-missing.txt"]).code).toBe(2);
+  });
+
+  test("edit reads its JSON from @file and takes images after the PDF", async () => {
+    const ops = { items: [{ type: "image", page: 0, x: 72, y: 72, w: 120, h: 80, image: 0 }], order: [{ page: 1 }, { page: 0 }] };
+    await Bun.write(`${dir}/edits.json`, JSON.stringify(ops));
+    const r = cli(["edit", "text-3.pdf", "photo.jpg", "--ops", "@edits.json", "--json"]);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out).results[0]).toMatchObject({ ok: true, report: { drawn: 1, pages: 2 } });
+    expect(cli(["edit", "text-3.pdf", "--ops", "@missing.json"]).code).toBe(2);
+    expect(cli(["edit", "photo.jpg", "--ops", "{}"]).err).toContain("is not a PDF");
+    expect(cli(["edit", "--help"]).out).toContain("pdfvault edit <pdf> [image...]");
+  });
 });
 
 describe("agent skill", () => {

@@ -378,6 +378,93 @@ pub fn compare(
     Ok((files, diffs))
 }
 
+// ---------------------------------------------------------------- redact
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RedactOptions {
+    pub dpi: f32,
+    pub quality: u8,
+    pub password: Option<String>,
+    pub pages: Vec<RedactPage>,
+}
+
+impl Default for RedactOptions {
+    fn default() -> Self {
+        RedactOptions {
+            dpi: 150.0,
+            quality: 85,
+            password: None,
+            pages: vec![],
+        }
+    }
+}
+
+/// Boxes to black out on one page (0-based): `[x, y, w, h]` in visual page
+/// space, points from the bottom-left, like the editor's other items.
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(default)]
+pub struct RedactPage {
+    pub page: usize,
+    pub rects: Vec<[f32; 4]>,
+}
+
+/// True redaction: each listed page is rendered, the boxes are painted black
+/// in the pixels, and the page is replaced by that image. Nothing under a
+/// box survives, and nothing else of the page does either: its text, links,
+/// annotations and form fields go. The other pages are left as they are.
+pub fn redact(bytes: &[u8], o: &RedactOptions) -> Result<(Vec<u8>, Vec<usize>)> {
+    if !(36.0..=600.0).contains(&o.dpi) {
+        return Err(Error::option("dpi must be between 36 and 600"));
+    }
+    let doc = open(bytes, o.password.as_deref())?;
+    let mut boxes: std::collections::BTreeMap<usize, Vec<[f32; 4]>> = Default::default();
+    for p in &o.pages {
+        if p.rects.iter().flatten().any(|v| !v.is_finite()) {
+            return Err(Error::option("redaction boxes must be finite numbers"));
+        }
+        boxes.entry(p.page).or_default().extend(&p.rects);
+    }
+    let mut pages = vec![];
+    for (index, rects) in boxes {
+        let page = doc
+            .pages()
+            .get(index)
+            .ok_or_else(|| Error::option(format!("page {} does not exist", index + 1)))?;
+        let (wpt, hpt) = page.render_dimensions();
+        let mut img = render_page(&doc, index, o.dpi)?;
+        let (w, h) = img.dimensions();
+        let (sx, sy) = (w as f32 / wpt, h as f32 / hpt);
+        for [x, y, bw, bh] in rects {
+            let (x0, x1) = (x.min(x + bw), x.max(x + bw));
+            let (y0, y1) = (y.min(y + bh), y.max(y + bh));
+            // Round outwards so a box never leaves a sliver of what it covers.
+            let px0 = ((x0 * sx).floor().max(0.0) as u32).min(w);
+            let px1 = ((x1 * sx).ceil().max(0.0) as u32).min(w);
+            let py0 = (((hpt - y1) * sy).floor().max(0.0) as u32).min(h);
+            let py1 = (((hpt - y0) * sy).ceil().max(0.0) as u32).min(h);
+            for py in py0..py1 {
+                for px in px0..px1 {
+                    img.put_pixel(px, py, image::Rgba([0, 0, 0, 255]));
+                }
+            }
+        }
+        let px = Pixels::Rgb(to_rgb(&img));
+        let meta = PageImage {
+            width: px.width(),
+            height: px.height(),
+            gray: false,
+        };
+        pages.push((index, meta, raster::encode_jpeg(&px, o.quality)?));
+    }
+    if pages.is_empty() {
+        return Err(Error::option("nothing to redact"));
+    }
+    let done = pages.iter().map(|p| p.0 + 1).collect();
+    let out = compress::replace_pages_with_images(bytes, o.password.as_deref(), &pages)?;
+    Ok((out, done))
+}
+
 // ---------------------------------------------------------------- dispatch
 
 #[derive(Deserialize, Default)]
@@ -388,7 +475,14 @@ struct Common {
     dpi: Option<f32>,
 }
 
-pub const OPS: &[&str] = &["render", "text", "compare", "extreme", "page-count"];
+pub const OPS: &[&str] = &[
+    "render",
+    "text",
+    "compare",
+    "extreme",
+    "redact",
+    "page-count",
+];
 
 /// Same contract as [`pdfvault_core::dispatch::run`].
 pub fn run(op: &str, inputs: Vec<Vec<u8>>, options: &str) -> Result<Output> {
@@ -461,6 +555,22 @@ pub fn run(op: &str, inputs: Vec<Vec<u8>>, options: &str) -> Result<Output> {
                     bytes,
                 }],
                 report: serde_json::to_value(report).map_err(|e| Error::option(e.to_string()))?,
+            })
+        }
+        "redact" => {
+            let o: RedactOptions = if v.is_null() {
+                RedactOptions::default()
+            } else {
+                serde_json::from_value(v).map_err(|e| Error::option(e.to_string()))?
+            };
+            let (bytes, pages) = redact(one()?, &o)?;
+            Ok(Output {
+                files: vec![OutFile {
+                    suffix: "redacted".into(),
+                    ext: "pdf".into(),
+                    bytes,
+                }],
+                report: json!({ "redactedPages": pages }),
             })
         }
         "page-count" => {
@@ -559,6 +669,41 @@ mod tests {
         assert_eq!(files.len(), 1);
         let (_, d) = compare(&a, &fixtures::text_pdf(3), 36.0, None).unwrap();
         assert_eq!(d[2].missing_in.as_deref(), Some("first"));
+    }
+
+    #[test]
+    fn redact_rasterizes_only_the_listed_pages() {
+        let two = pdfvault_core::pages::merge(&[fixtures::form_pdf(), fixtures::text_pdf(1)], None)
+            .unwrap();
+        let o = RedactOptions {
+            dpi: 72.0,
+            pages: vec![RedactPage {
+                page: 0,
+                rects: vec![[100.0, 640.0, 250.0, 70.0]],
+            }],
+            ..Default::default()
+        };
+        let (out, done) = redact(&two, &o).unwrap();
+        assert_eq!(done, vec![1]);
+        let doc = pdf::load(&out, None).unwrap();
+        assert_eq!(doc.extract_text(&[1]).unwrap_or_default().trim(), "");
+        assert!(doc.extract_text(&[2]).unwrap().contains("Page 1"));
+        assert!(!fixtures::any_stream_contains(&out, b"Ada Lovelace"));
+        // The pixels under the box are black, the rest is not.
+        let (files, _) = render_pages(
+            &out,
+            &RenderOptions {
+                format: "rgba".into(),
+                dpi: 72.0,
+                pages: Some("1".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let px = |x: usize, y: usize| files[0].bytes[(y * 612 + x) * 4];
+        assert!(px(200, 792 - 680) < 40, "under the box");
+        assert!(px(20, 20) > 200, "outside the box");
+        assert!(redact(&two, &RedactOptions::default()).is_err());
     }
 
     #[test]

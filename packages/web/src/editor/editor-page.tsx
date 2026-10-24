@@ -1,0 +1,497 @@
+import { EngineError, outputName, type EditReport, type FormField } from "@pdfvault/engine";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { download, type InFile } from "../action-panel.tsx";
+import { Icon } from "../icons.tsx";
+import { bytes } from "../reports.tsx";
+import { coreReport, runJob, warmUp } from "../runner.ts";
+import { Drop } from "../tool-page.tsx";
+import { vault } from "../vault.ts";
+import { workspace } from "../workspace.ts";
+import { initialDoc, sources, toOps, useHistory, moveItem, type Item, type SrcPage, type StampImage, type ToolName } from "./model.ts";
+import { PageCanvas, type Style } from "./page-canvas.tsx";
+import { ImagePicker } from "./signature-pad.tsx";
+import { Thumbs } from "./thumbs.tsx";
+
+interface Source extends InFile {
+  /** The workspace file this came from, to put the result back in its place. */
+  from?: string;
+}
+
+interface Info {
+  pages: number;
+  pageSizes: { width: number; height: number; rotation: number }[];
+  security: { needsPassword: boolean };
+}
+
+const TOOLS: { id: ToolName; label: string; icon: string; hint: string }[] = [
+  { id: "select", label: "Select", icon: "cursor", hint: "Select, move and resize what you added. Double-click text to change it." },
+  { id: "text", label: "Text", icon: "text", hint: "Click where the text should start, then type." },
+  { id: "whiteout", label: "Whiteout", icon: "whiteout", hint: "Drag over what should disappear behind white. Add text on top to replace it." },
+  { id: "highlight", label: "Highlight", icon: "highlight", hint: "Drag over a passage. Highlights are real comments other PDF apps can edit." },
+  { id: "ink", label: "Draw", icon: "pen", hint: "Draw freehand with a mouse, a finger or a pen." },
+  { id: "rect", label: "Box", icon: "square", hint: "Drag to draw a rectangle outline." },
+  { id: "note", label: "Note", icon: "note", hint: "Click to pin a comment. It stays editable in other PDF apps." },
+  { id: "image", label: "Sign / image", icon: "signature", hint: "Click on a page to place the signature or image." },
+  { id: "redact", label: "Redact", icon: "redact", hint: "Drag over what must be removed for good. Redacted pages become images when saved." },
+];
+
+const DEFAULT_STYLE: Record<string, Style> = {
+  text: { color: "#111111", size: 14, bold: false, lineWidth: 2 },
+  ink: { color: "#1a2b6d", size: 14, bold: false, lineWidth: 2 },
+  rect: { color: "#d93025", size: 14, bold: false, lineWidth: 2 },
+  highlight: { color: "#ffe14d", size: 14, bold: false, lineWidth: 2 },
+  note: { color: "#f5c518", size: 14, bold: false, lineWidth: 2 },
+};
+
+const ZOOMS = [50, 75, 100, 125, 150, 200];
+
+export function EditorPage() {
+  const [file, setFile] = useState<Source | null>(() => {
+    const f = workspace.editing ? workspace.get(workspace.editing) : undefined;
+    workspace.editing = null;
+    return f && f.kind === "pdf" ? { key: f.key, name: f.name, bytes: f.bytes, password: f.password, from: f.key } : null;
+  });
+  const [pages, setPages] = useState<SrcPage[] | null>(null);
+  const [fields, setFields] = useState<FormField[]>([]);
+  const [needsPassword, setNeedsPassword] = useState(false);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [tool, setTool] = useState<ToolName>("select");
+  const [styles, setStyles] = useState(DEFAULT_STYLE);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [images, setImages] = useState<StampImage[]>([]);
+  const [pendingImage, setPendingImage] = useState<number | null>(null);
+  const [picker, setPicker] = useState(false);
+  const [zoom, setZoom] = useState(100);
+  const [fit, setFit] = useState(1);
+  const [current, setCurrent] = useState(0);
+  const [result, setResult] = useState<{ name: string; bytes: Uint8Array; report: EditReport } | null>(null);
+  const [saved, setSaved] = useState<"vault" | "files" | null>(null);
+  const history = useHistory(() => initialDoc(0));
+  const { doc, commit, live, checkpoint, undo, redo, reset } = history;
+  const column = useRef<HTMLDivElement>(null);
+  const abort = useRef<AbortController | null>(null);
+  const unlocked = useSyncExternalStore((fn) => vault.subscribe(fn), () => vault.unlocked);
+  const pwId = useId();
+
+  useEffect(() => {
+    warmUp("core");
+    warmUp("render");
+    return () => abort.current?.abort();
+  }, []);
+  useEffect(() => () => pages?.forEach((p) => p.url && URL.revokeObjectURL(p.url)), [pages]);
+  const imageUrls = useRef<string[]>([]);
+  imageUrls.current = images.map((i) => i.url);
+  useEffect(() => () => imageUrls.current.forEach((u) => URL.revokeObjectURL(u)), []);
+
+  const open = async (f: Source, pw?: string) => {
+    abort.current?.abort();
+    abort.current = new AbortController();
+    setFile(f);
+    setPages(null);
+    setError(null);
+    setResult(null);
+    setNeedsPassword(false);
+    const opts = { password: pw || f.password || undefined };
+    try {
+      setProgress("Reading the document");
+      const info = await coreReport<Info>("info", f.bytes, opts);
+      if (info.pages === 0 && info.security.needsPassword) {
+        setNeedsPassword(true);
+        setProgress(null);
+        return;
+      }
+      const form = await coreReport<{ fields: FormField[] }>("form-fields", f.bytes, opts);
+      // Sharp on high-density screens without rendering huge bitmaps.
+      const dpi = Math.round(96 * Math.min(window.devicePixelRatio || 1, 2));
+      const r = await runJob("pdf2img", [f.bytes], { format: "jpeg", dpi, quality: 82, ...opts }, ["render"], (label, fraction) =>
+        setProgress(fraction === null ? label : `${label} (${Math.round(fraction * 100)}%)`),
+        abort.current.signal,
+      );
+      const urls = r.files.map((x) => URL.createObjectURL(new Blob([x.bytes as BlobPart], { type: "image/jpeg" })));
+      const srcPages = info.pageSizes.map((s, i) => {
+        const turned = s.rotation % 180 !== 0;
+        return { width: turned ? s.height : s.width, height: turned ? s.width : s.height, url: urls[i] };
+      });
+      setFile({ ...f, password: opts.password });
+      setFields(form.fields);
+      setPages(srcPages);
+      reset(initialDoc(srcPages.length));
+      setSelected(null);
+      setEditing(null);
+      setCurrent(0);
+    } catch (e) {
+      const err = e instanceof EngineError ? e : new EngineError("internal", String(e));
+      if (err.message === "cancelled") return;
+      if (err.code === "password_required" || err.code === "wrong_password") {
+        setNeedsPassword(true);
+        if (err.code === "wrong_password") setError("That password is not right.");
+      } else setError(err.message);
+    } finally {
+      setProgress(null);
+    }
+  };
+
+  useEffect(() => {
+    if (file && !pages) void open(file);
+    // Only the file the page was opened with.
+  }, []);
+
+  // Fit the widest page to the column; zoom scales from there.
+  useEffect(() => {
+    const el = column.current;
+    if (!el || !pages) return;
+    const all = sources(pages, doc);
+    const widest = Math.max(...doc.pages.map((p) => (p.rotate % 180 ? all[p.src]?.height : all[p.src]?.width) ?? 612));
+    const ro = new ResizeObserver(([entry]) => {
+      const w = entry!.contentRect.width - 8;
+      setFit(Math.min(1.5, Math.max(0.2, w / widest)));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [pages, doc]);
+
+  const srcs = useMemo(() => (pages ? sources(pages, doc) : []), [pages, doc]);
+  const scale = fit * (zoom / 100);
+  const styleKey = tool === "whiteout" || tool === "redact" || tool === "select" || tool === "image" ? null : tool;
+  const selectedItem = doc.items.find((i) => i.id === selected) ?? null;
+  const styleTarget = selectedItem && tool === "select" ? (selectedItem.type === "rect" && selectedItem.stroke ? "rect" : selectedItem.type) : styleKey;
+  const style = styles[styleTarget ?? "text"] ?? DEFAULT_STYLE.text!;
+  const redactions = doc.items.filter((i) => i.type === "redact").length;
+  const dirty = history.canUndo;
+
+  const setStyle = (patch: Partial<Style>) => {
+    if (!styleTarget) return;
+    setStyles((s) => ({ ...s, [styleTarget]: { ...style, ...patch } }));
+    if (selectedItem && tool === "select") {
+      commit((d) => ({
+        ...d,
+        items: d.items.map((it): Item => {
+          if (it.id !== selectedItem.id) return it;
+          if (it.type === "text") return { ...it, color: patch.color ?? it.color, size: patch.size ?? it.size, bold: patch.bold ?? it.bold };
+          if (it.type === "rect" && it.stroke) return { ...it, stroke: patch.color ?? it.stroke, lineWidth: patch.lineWidth ?? it.lineWidth };
+          if (it.type === "ink") return { ...it, color: patch.color ?? it.color, lineWidth: patch.lineWidth ?? it.lineWidth };
+          if (it.type === "highlight" || it.type === "note") return { ...it, color: patch.color ?? it.color };
+          return it;
+        }),
+      }));
+    }
+  };
+
+  const pickTool = (t: ToolName) => {
+    if (t === "image") {
+      setPicker(true);
+      return;
+    }
+    setTool(t);
+    setPendingImage(null);
+    setEditing(null);
+    if (t !== "select") setSelected(null);
+  };
+
+  // Keyboard: delete, undo/redo, nudge, escape.
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest("input, textarea, select, [contenteditable], dialog")) return;
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if (mod && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
+      } else if ((e.key === "Delete" || e.key === "Backspace") && selected) {
+        e.preventDefault();
+        commit((d) => ({ ...d, items: d.items.filter((i) => i.id !== selected) }));
+        setSelected(null);
+      } else if (e.key === "Escape") {
+        setSelected(null);
+        setTool("select");
+        setPendingImage(null);
+      } else if (selected && e.key.startsWith("Arrow")) {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        const [dx, dy] = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] }[e.key] ?? [0, 0];
+        commit((d) => ({ ...d, items: d.items.map((i) => (i.id === selected ? moveItem(i, dx!, dy!) : i)) }));
+      }
+    };
+    addEventListener("keydown", key);
+    return () => removeEventListener("keydown", key);
+  }, [selected, commit, undo, redo]);
+
+  useEffect(() => {
+    if (!dirty || result) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    addEventListener("beforeunload", warn);
+    return () => removeEventListener("beforeunload", warn);
+  }, [dirty, result]);
+
+  const save = async () => {
+    if (!file || !pages) return;
+    setEditing(null);
+    setError(null);
+    abort.current = new AbortController();
+    try {
+      const ops = toOps(doc, pages.length);
+      const r = await runJob(
+        "edit",
+        [file.bytes, ...images.map((i) => i.bytes)],
+        { ops: JSON.stringify(ops), password: file.password },
+        redactions ? ["render"] : [],
+        (label, fraction) => setProgress(fraction === null ? label : `${label} (${Math.round(fraction * 100)}%)`),
+        abort.current.signal,
+      );
+      const out = r.files[0]!;
+      setResult({ name: outputName(file.name, out), bytes: out.bytes, report: r.report as EditReport });
+      setSaved(null);
+    } catch (e) {
+      const err = e instanceof EngineError ? e : new EngineError("internal", String(e));
+      if (err.message !== "cancelled") setError(err.message);
+    } finally {
+      setProgress(null);
+    }
+  };
+
+  const goTo = (i: number) => {
+    setCurrent(i);
+    column.current?.querySelector(`[data-page="${i + 1}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const hint = pendingImage !== null && tool === "image" ? TOOLS.find((t) => t.id === "image")!.hint : TOOLS.find((t) => t.id === tool)!.hint;
+
+  return (
+    <article className="tool editor">
+      <header className="tool-head">
+        <a href="#/" className="back">
+          <Icon name="back" /> {file?.from ? "Your files" : "All tools"}
+        </a>
+        <h1>Edit PDF</h1>
+        {!pages ? <p>Add text, a signature or images, fill forms, comment, redact, and reorder or turn pages. Everything happens in this tab.</p> : null}
+      </header>
+
+      {!file ? (
+        <Drop
+          label="PDF to edit"
+          accept="application/pdf,.pdf"
+          multiple={false}
+          kind="pdf"
+          files={[]}
+          onFiles={([f]) => {
+            if (f) void open(f);
+          }}
+          onRemove={() => {}}
+          onMove={() => {}}
+          ordered={false}
+        />
+      ) : null}
+
+      {needsPassword && file ? (
+        <form
+          className="locked"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void open(file, password);
+          }}
+        >
+          <Icon name="lock" />
+          <div className="field">
+            <label htmlFor={pwId}>This PDF is locked. Its password:</label>
+            <input id={pwId} type="password" autoComplete="off" value={password} onChange={(e) => setPassword(e.currentTarget.value)} />
+          </div>
+          <button type="submit" className="primary" disabled={!password}>
+            Open
+          </button>
+        </form>
+      ) : null}
+
+      {progress ? (
+        <div className="progress" role="status" aria-live="polite">
+          <div className="track" data-indeterminate="true">
+            <span />
+          </div>
+          <p>{progress}…</p>
+        </div>
+      ) : null}
+      {error ? (
+        <p className="error-text" role="alert">
+          {error}
+        </p>
+      ) : null}
+
+      {file && pages ? (
+        <>
+          <div className="ed-bar" role="toolbar" aria-label="Editing tools">
+            <div className="ed-tools">
+              {TOOLS.map((t) => (
+                <button key={t.id} type="button" className="ed-tool" aria-pressed={tool === t.id} onClick={() => pickTool(t.id)} title={t.label}>
+                  <Icon name={t.icon} /> <span>{t.label}</span>
+                </button>
+              ))}
+            </div>
+            <div className="ed-style">
+              {styleTarget && styleTarget !== "image" && styleTarget !== "redact" ? (
+                <label className="ed-color">
+                  <span>Color</span>
+                  <input type="color" value={style.color} onChange={(e) => setStyle({ color: e.currentTarget.value })} aria-label="Color" />
+                </label>
+              ) : null}
+              {styleTarget === "text" ? (
+                <>
+                  <label className="ed-num">
+                    <span>Size</span>
+                    <input type="number" min={4} max={300} value={selectedItem?.type === "text" ? (selectedItem.size ?? 14) : style.size} onChange={(e) => setStyle({ size: Number(e.currentTarget.value) || 14 })} aria-label="Text size" />
+                  </label>
+                  <button type="button" className="ed-tool" aria-pressed={selectedItem?.type === "text" ? Boolean(selectedItem.bold) : style.bold} onClick={() => setStyle({ bold: !(selectedItem?.type === "text" ? selectedItem.bold : style.bold) })} aria-label="Bold">
+                    <strong>B</strong>
+                  </button>
+                </>
+              ) : null}
+              {styleTarget === "ink" || (styleTarget === "rect" && tool !== "whiteout") ? (
+                <label className="ed-num">
+                  <span>Line</span>
+                  <input type="number" min={0.5} max={20} step={0.5} value={style.lineWidth} onChange={(e) => setStyle({ lineWidth: Number(e.currentTarget.value) || 2 })} aria-label="Line width" />
+                </label>
+              ) : null}
+              {selectedItem && tool === "select" ? (
+                <button
+                  type="button"
+                  className="icon"
+                  onClick={() => {
+                    commit((d) => ({ ...d, items: d.items.filter((i) => i.id !== selectedItem.id) }));
+                    setSelected(null);
+                  }}
+                  aria-label="Delete the selection"
+                  title="Delete"
+                >
+                  <Icon name="trash" />
+                </button>
+              ) : null}
+            </div>
+            <div className="ed-history">
+              <button type="button" className="icon" onClick={undo} disabled={!history.canUndo} aria-label="Undo" title="Undo (Ctrl+Z)">
+                <Icon name="undo" />
+              </button>
+              <button type="button" className="icon" onClick={redo} disabled={!history.canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">
+                <Icon name="redo" />
+              </button>
+              <span className="zoom" role="group" aria-label="Zoom">
+                <button type="button" className="icon" disabled={zoom <= ZOOMS[0]!} onClick={() => setZoom((z) => ZOOMS[ZOOMS.indexOf(z) - 1] ?? z)} aria-label="Zoom out">
+                  <Icon name="minus" />
+                </button>
+                <output aria-live="polite">{zoom}%</output>
+                <button type="button" className="icon" disabled={zoom >= ZOOMS.at(-1)!} onClick={() => setZoom((z) => ZOOMS[ZOOMS.indexOf(z) + 1] ?? z)} aria-label="Zoom in">
+                  <Icon name="plus" />
+                </button>
+              </span>
+              <button type="button" className="primary ed-save" onClick={() => void save()} disabled={Boolean(progress)}>
+                <Icon name="download" /> Save PDF
+              </button>
+            </div>
+          </div>
+          <p className="note ed-hint" aria-live="polite">
+            {hint}
+            {redactions ? ` ${redactions} redaction${redactions > 1 ? "s" : ""}: those pages will be flattened to images, their text removed.` : ""}
+          </p>
+
+          {result ? (
+            <div className="ed-result" role="status">
+              <span className="name">{result.name}</span>
+              <span className="size">
+                {bytes(result.bytes.length)} · {result.report.pages} page{result.report.pages > 1 ? "s" : ""}
+                {result.report.redactedPages.length ? ` · redacted page${result.report.redactedPages.length > 1 ? "s" : ""} ${result.report.redactedPages.join(", ")}` : ""}
+              </span>
+              <button type="button" className="primary small" onClick={() => download(result.name, result.bytes)}>
+                <Icon name="download" /> Download
+              </button>
+              {unlocked ? (
+                <button
+                  type="button"
+                  className="secondary small"
+                  disabled={saved === "vault"}
+                  onClick={() => void vault.add(result.name, "pdf", result.bytes).then(() => setSaved("vault"))}
+                >
+                  <Icon name="lock" /> {saved === "vault" ? "Saved" : "Save to vault"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="secondary small"
+                onClick={() => {
+                  if (file.from && workspace.get(file.from)) workspace.replace(file.from, result.name, result.bytes);
+                  else workspace.add([{ name: result.name, bytes: result.bytes, unsaved: true }]);
+                  location.hash = "#/";
+                }}
+              >
+                {file.from ? "Back to your files with this version" : "Keep working on it"}
+              </button>
+            </div>
+          ) : null}
+
+          <div className="ed-layout">
+            <Thumbs pages={doc.pages} srcs={srcs} inputPages={pages.length} current={current} onGo={goTo} commit={commit} />
+            <div className="ed-column" ref={column}>
+              {fields.length ? (
+                <label className="check ed-flatten">
+                  <input type="checkbox" checked={doc.flattenFields} onChange={(e) => commit((d) => ({ ...d, flattenFields: e.currentTarget.checked }))} />
+                  <span>Lock the form after filling (flatten fields)</span>
+                </label>
+              ) : null}
+              <section className="ed-pages" aria-label="Pages">
+                {doc.pages.map((pg, i) => {
+                  const src = srcs[pg.src];
+                  if (!src) return null;
+                  return (
+                    <PageCanvas
+                      key={pg.id}
+                      index={i}
+                      page={pg}
+                      src={src}
+                      scale={scale}
+                      items={doc.items.filter((it) => it.page === pg.src)}
+                      fields={fields.filter((f) => f.page === pg.src)}
+                      values={doc.fields}
+                      tool={tool}
+                      style={style}
+                      selected={selected}
+                      editing={editing}
+                      images={images}
+                      pendingImage={pendingImage}
+                      onSelect={setSelected}
+                      onEdit={setEditing}
+                      onPlaced={() => {
+                        setTool("select");
+                        setPendingImage(null);
+                      }}
+                      onFocusPage={() => setCurrent(i)}
+                      commit={commit}
+                      live={live}
+                      checkpoint={checkpoint}
+                    />
+                  );
+                })}
+              </section>
+              <p className="note viewer-hint">
+                Text uses Helvetica: Latin characters only. Existing text cannot be retyped; cover it with Whiteout, then add new text.
+              </p>
+            </div>
+          </div>
+        </>
+      ) : null}
+
+      <ImagePicker
+        open={picker}
+        onClose={() => setPicker(false)}
+        onPick={(img) => {
+          setImages((all) => [...all, img]);
+          setPendingImage(images.length);
+          setTool("image");
+          setSelected(null);
+        }}
+      />
+    </article>
+  );
+}

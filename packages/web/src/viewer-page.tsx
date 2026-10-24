@@ -4,6 +4,7 @@ import { Icon } from "./icons.tsx";
 import { bytes } from "./reports.tsx";
 import { runJob, warmUp } from "./runner.ts";
 import { Drop, type InFile } from "./tool-page.tsx";
+import { workspace } from "./workspace.ts";
 
 interface Page {
   url: string;
@@ -115,6 +116,18 @@ export function ViewerPage() {
               <Icon name="plus" />
             </button>
           </span>
+          <button
+            type="button"
+            className="primary small"
+            onClick={() => {
+              // The editor opens files from your files: put this one there first.
+              const [f] = workspace.add([{ name: doc.name, bytes: doc.bytes, password }]);
+              workspace.editing = f?.key ?? null;
+              location.hash = "#/edit";
+            }}
+          >
+            <Icon name="edit" /> Edit
+          </button>
           <button
             type="button"
             className="secondary small"

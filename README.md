@@ -1,6 +1,6 @@
 # pdfvault
 
-**Private PDF and image tools that never upload your files.** Compress, merge, split, reorder, protect, OCR and convert PDFs, and compress, resize or clean images, entirely on your device. One Rust engine compiled to WebAssembly runs both the website and the command-line tool, so they always produce the same bytes.
+**Private PDF and image tools that never upload your files.** Drop your PDFs and photos, then compress, edit, sign, fill, redact, merge, split, protect, OCR or convert them, entirely on your device. One Rust engine compiled to WebAssembly runs both the website and the command-line tool, so they always produce the same bytes.
 
 **→ [maxgfr.github.io/pdfvault](https://maxgfr.github.io/pdfvault/)** · works offline after the first visit · `bunx pdfvault --help`
 
@@ -9,20 +9,31 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/home-dark.png">
-  <img alt="pdfvault home page: tool grid grouped by category" src="docs/home-light.png" width="800">
+  <img alt="pdfvault home page: a drop zone for PDFs and photos, with the tools below" src="docs/home-light.png" width="800">
 </picture>
 
 ## Why
 
 Online PDF tools ask you to upload contracts, payslips and scans to someone else's server. pdfvault does the same work in your browser tab, in WebAssembly, and the browser itself is told to forbid any connection to another origin. There is no backend, account, analytics or third-party script.
 
+## How it works
+
+Start from your files, not from a tool. Drop several PDFs, photos or a whole folder on the home page (or paste a screenshot): the page lists them with a preview and offers what fits the selection. Compress works on a mix (each file gets the right tool), photos and PDFs combine into one PDF in the order shown, and every tool that accepts the selection is one click away. A result can replace its original in the list, so you can compress, then protect, then download, without saving anything in between. Formats the browser cannot read (HEIC, Office documents) are named with what to do instead.
+
+The editor opens a PDF page by page: add text, whiteout, boxes, freehand drawing, a drawn or imported signature, images, highlights and sticky notes (real annotations other PDF apps can edit), fill form fields, redact for good, and reorder, rotate, duplicate, delete or insert pages from the page strip. Undo and redo cover every step. Saving runs the same `edit` command the CLI has.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/editor-dark.png">
+  <img alt="The editor: a form field filled in, a highlight, added text and a sticky note on a page, with the page strip on the left" src="docs/editor-light.png" width="800">
+</picture>
+
 ## Tools
 
 | Category | Tools |
 | --- | --- |
 | Compress | **Compress PDF** with four levels (below), never larger than the original |
-| Organize | Merge (one bookmark per file), split (ranges, every N pages, by bookmark), extract, delete, reorder, rotate, insert blank pages, N-up (2–16 pages per sheet) |
-| Edit | Crop, text watermark, page numbers, header and footer, visual signature (image stamp), metadata (read, edit, wipe), flatten forms, repair, compare (pixel diff per page), info |
+| Organize | Merge (one bookmark per file), combine PDFs and images into one PDF, split (ranges, every N pages, by bookmark), extract, delete, reorder, rotate, insert blank pages, N-up (2–16 pages per sheet) |
+| Edit | **Editor**: text, whiteout, shapes, drawing, signature and images, highlights and notes as annotations, form filling, true redaction, page strip. Crop, text watermark, page numbers, header and footer, visual signature (image stamp), metadata (read, edit, wipe), flatten forms, repair, compare (pixel diff per page), info |
 | Security | Password protection with **AES-256** (PDF 2.0, revision 6), permissions, unlock |
 | Convert | Images → PDF (JPEGs embedded untouched, EXIF orientation honored), PDF → PNG/JPEG/WebP, **OCR → searchable PDF**, PDF → Markdown, text or EPUB (OCR on scanned pages) |
 | Images | Compress, resize, convert JPEG/PNG/WebP, strip EXIF/GPS/XMP without re-encoding, crop/rotate/flip, in batches |
@@ -49,6 +60,8 @@ Advanced settings override the level: target DPI, JPEG quality, grayscale, keep 
 bunx pdfvault compress report.pdf --preset strong          # → report-compressed.pdf
 bunx pdfvault compress "scans/*.pdf" -o small/ --json      # batch, machine-readable report
 bunx pdfvault merge a.pdf b.pdf -o all.pdf
+bunx pdfvault combine scan.pdf photo.jpg -o all.pdf             # PDFs and images, in order
+bunx pdfvault edit form.pdf sig.png --ops @edits.json            # the editor's JSON, see the skill
 bunx pdfvault split book.pdf --mode bookmarks -o chapters/
 bunx pdfvault encrypt contract.pdf --user-password '…'
 bunx pdfvault ocr scan.pdf && bunx pdfvault to-md scan-searchable.pdf
@@ -127,6 +140,9 @@ Fuzzing: `cd fuzz && cargo +nightly fuzz run parse`.
 - `extreme` turns text into pixels; run OCR on the result if it must stay searchable.
 - Fonts are not subset, so text-only PDFs shrink less than image-heavy ones.
 - The visual signature is an image, not a cryptographic signature.
+- The editor cannot retype existing text (cover it with whiteout, then add text), and added text uses Helvetica: Latin characters only.
+- Redaction rasterizes the pages it touches: everything on those pages becomes pixels. Run OCR afterwards if they must stay searchable.
+- HEIC and AVIF photos and Office documents cannot be read; export them as JPEG or PDF first.
 - WebP output is lossless (no lossy WebP encoder in pure Rust).
 - No threads in wasm: GitHub Pages cannot send the COOP/COEP headers they need.
 

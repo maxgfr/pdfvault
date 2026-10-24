@@ -6,7 +6,7 @@ import { Engine, EngineError, toolById, withDefaults, type Loader, type ModuleNa
 declare const self: DedicatedWorkerGlobalScope;
 
 /** Core operations the page may call directly, outside the tool registry. */
-export const DIRECT_OPS = ["kdf", "zip", "meta-read", "info"] as const;
+export const DIRECT_OPS = ["kdf", "zip", "meta-read", "info", "form-fields"] as const;
 
 export interface JobRequest {
   /** A tool id, or `core:<op>` for one of DIRECT_OPS. */

@@ -4,6 +4,7 @@
 
 pub mod compress;
 pub mod dispatch;
+pub mod edit;
 pub mod epub;
 pub mod error;
 pub mod forms;

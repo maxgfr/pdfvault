@@ -1,12 +1,14 @@
 import { toolById } from "@pdfvault/engine";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { About } from "./about.tsx";
+import { EditorPage } from "./editor/editor-page.tsx";
 import { Home } from "./home.tsx";
 import { Icon } from "./icons.tsx";
 import { ToolPage } from "./tool-page.tsx";
 import { VaultPage } from "./vault-page.tsx";
 import { ViewerPage } from "./viewer-page.tsx";
 import { vault } from "./vault.ts";
+import { useWorkspace } from "./workspace.ts";
 
 function useRoute(): string {
   const get = () => location.hash.replace(/^#\/?/, "").split("?")[0] ?? "";
@@ -33,11 +35,14 @@ export function useOffline(): { offlineReady: boolean } {
 
 export function App() {
   const route = useRoute();
-  const tool = toolById.get(route);
+  // The editor has its own page; the registry's "edit" tool is what it runs.
+  const tool = route === "edit" ? undefined : toolById.get(route);
   const unlocked = useSyncExternalStore((fn) => vault.subscribe(fn), () => vault.unlocked);
   const { offlineReady } = useOffline();
+  const files = useWorkspace();
   useEffect(() => {
-    document.title = tool ? `${tool.title} · pdfvault` : route === "vault" ? "Vault · pdfvault" : route === "view" ? "PDF viewer · pdfvault" : "pdfvault: private PDF tools";
+    const titles: Record<string, string> = { vault: "Vault", view: "PDF viewer", edit: "Edit PDF", privacy: "Privacy" };
+    document.title = tool ? `${tool.title} · pdfvault` : titles[route] ? `${titles[route]} · pdfvault` : "pdfvault: private PDF tools";
   }, [tool, route]);
 
   return (
@@ -55,6 +60,14 @@ export function App() {
           <span>pdfvault</span>
         </a>
         <nav aria-label="Main">
+          {files.length && route !== "" ? (
+            <a href="#/">
+              <Icon name="file" /> <span className="nav-label">Your files</span> <span className="count">{files.length}</span>
+            </a>
+          ) : null}
+          <a href="#/edit" aria-current={route === "edit" ? "page" : undefined}>
+            <Icon name="edit" /> <span className="nav-label">Edit</span>
+          </a>
           <a href="#/view" aria-current={route === "view" ? "page" : undefined}>
             <Icon name="view" /> <span className="nav-label">Viewer</span>
           </a>
@@ -67,7 +80,19 @@ export function App() {
         </nav>
       </header>
       <main id="main" tabIndex={-1}>
-        {tool ? <ToolPage key={tool.id} tool={tool} /> : route === "vault" ? <VaultPage /> : route === "view" ? <ViewerPage /> : route === "privacy" ? <About /> : <Home />}
+        {tool ? (
+          <ToolPage key={tool.id} tool={tool} />
+        ) : route === "edit" ? (
+          <EditorPage />
+        ) : route === "vault" ? (
+          <VaultPage />
+        ) : route === "view" ? (
+          <ViewerPage />
+        ) : route === "privacy" ? (
+          <About />
+        ) : (
+          <Home />
+        )}
       </main>
       <footer className="bottom">
         <p>

@@ -17,6 +17,28 @@ for (const scheme of ["light", "dark"] as const) {
   await page.getByRole("region", { name: "Results" }).waitFor();
   await page.waitForTimeout(300);
   await page.screenshot({ path: `${out}compress-${scheme}.png`, fullPage: true });
+  await page.goto(`${base}#/edit`);
+  await page.getByLabel("PDF to edit").setInputFiles(`${fixtures}form.pdf`);
+  const sheet = page.getByRole("img", { name: "Page 1", exact: true });
+  await sheet.waitFor();
+  await page.getByLabel("Form field name").fill("Grace Hopper");
+  const box = (await sheet.boundingBox())!;
+  await page.getByRole("button", { name: "Highlight" }).click();
+  await page.mouse.move(box.x + box.width * 0.11, box.y + box.height * 0.045);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.075, { steps: 5 });
+  await page.mouse.up();
+  await page.getByRole("button", { name: "Text", exact: true }).click();
+  await page.mouse.click(box.x + box.width * 0.15, box.y + box.height * 0.25);
+  await page.keyboard.type("Approved, 24 October");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Note" }).click();
+  await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.06);
+  await page.keyboard.type("Check the date");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${out}editor-${scheme}.png` });
   await page.close();
 }
 await browser.close();
