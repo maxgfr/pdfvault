@@ -1944,3 +1944,68 @@ button.ws-thumb {
 button.ws-thumb:hover {
   border-color: var(--accent);
 }
+
+/* ---------------------------------------------------------------- editor: paragraphs and objects */
+
+.ed-page .ed-para-view,
+.ed-page .ed-text-editor[data-para="true"] {
+  position: absolute;
+  left: var(--left);
+  top: var(--top);
+  width: var(--w);
+  margin: 0;
+  padding: 0;
+  color: var(--color);
+  font-family: var(--ff);
+  font-size: var(--fs);
+  line-height: var(--lh);
+  text-align: var(--align);
+  text-indent: var(--indent);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.ed-page .ed-para-view {
+  z-index: 1;
+  pointer-events: none;
+}
+.ed-page .ed-para-view[data-bold="true"] {
+  font-weight: 700;
+}
+.ed-page .ed-para-view[data-italic="true"] {
+  font-style: italic;
+}
+.ed-page .ed-text-editor[data-para="true"] {
+  min-height: var(--lh);
+  field-sizing: content;
+}
+.ed-pobj,
+.ed-object-box {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 1.25px;
+  vector-effect: non-scaling-stroke;
+}
+.ed-svg[data-tool="select"] .ed-pobj {
+  cursor: move;
+}
+.ed-svg[data-tool="select"] .ed-pobj:hover,
+.ed-svg[data-tool="select"] .ed-object-box:hover {
+  stroke: var(--accent);
+  stroke-dasharray: 3 2;
+}
+.ed-object-was {
+  fill: rgb(255 255 255 / 0.6);
+  stroke: #d93025;
+  stroke-width: 1.25px;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.ed-overflow {
+  margin: -4px 0 12px;
+  padding: 8px 12px;
+  background: var(--warn-soft);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+}

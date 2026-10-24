@@ -107,6 +107,14 @@ export const canQueryLocalFonts = () => typeof window !== "undefined" && "queryL
 const nameKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 const installedCache = new Map<string, ExtraFont | null>();
 
+/** The installed fonts already found for these names, without asking again. */
+export function knownInstalledFonts(names: string[]): ExtraFont[] {
+  return names.flatMap((n) => {
+    const f = installedCache.get(nameKey(n));
+    return f ? [f] : [];
+  });
+}
+
 /** Complete copies of the document's fonts on this device, by PostScript name
  *  (the browser asks for permission the first time). */
 export async function findInstalledFonts(names: string[]): Promise<ExtraFont[]> {

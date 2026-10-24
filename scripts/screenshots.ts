@@ -30,15 +30,19 @@ for (const scheme of ["light", "dark"] as const) {
   await page.mouse.up();
   // The page's own title, rewritten in place ("Form": 24 pt on the baseline at y = 720).
   await page.getByRole("button", { name: "Edit text" }).click();
-  await page.mouse.click(box.x + box.width * 0.14, box.y + box.height * ((792 - 728) / 792));
-  await page.getByRole("textbox", { name: "Edit this line" }).fill("Application form");
+  // The longer hint of this tool moves the page down: measure it again.
+  const at = (await sheet.boundingBox())!;
+  await page.mouse.click(at.x + at.width * 0.14, at.y + at.height * ((792 - 728) / 792));
+  await page.getByRole("textbox", { name: "Edit this paragraph" }).fill("Application form");
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Add text" }).click();
-  await page.mouse.click(box.x + box.width * 0.15, box.y + box.height * 0.25);
+  const box2 = (await sheet.boundingBox())!;
+  await page.mouse.click(box2.x + box2.width * 0.15, box2.y + box2.height * 0.25);
   await page.keyboard.type("Approuvé — 24 octobre");
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Note" }).click();
-  await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.06);
+  const box3 = (await sheet.boundingBox())!;
+  await page.mouse.click(box3.x + box3.width * 0.8, box3.y + box3.height * 0.06);
   await page.keyboard.type("Check the date");
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");

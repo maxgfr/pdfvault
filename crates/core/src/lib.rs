@@ -17,6 +17,7 @@ pub mod kdf;
 pub mod markdown;
 pub mod meta;
 pub mod pages;
+pub mod paragraphs;
 pub mod pdf;
 pub mod pdffont;
 pub mod raster;

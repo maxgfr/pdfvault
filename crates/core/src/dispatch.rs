@@ -210,9 +210,17 @@ pub fn run(op: &str, inputs: Vec<Vec<u8>>, options: &str) -> Result<Output> {
             let doc = pdf::load(&one(&inputs, op)?, pw)?;
             let count = pdf::page_ids(&doc).len();
             let pages = pdf::parse_ranges(&c.page_spec().unwrap_or_default(), count)?;
+            let ids = pdf::page_ids(&doc);
+            let (mut runs, mut paragraphs, mut objects) = (vec![], vec![], vec![]);
+            for p in pages {
+                let page = interp::interpret(&doc, ids[p]);
+                runs.extend(textedit::runs_of(&page, p));
+                paragraphs.extend(paragraphs::paragraphs_of(&page, p));
+                objects.extend(textedit::objects_of(&page, p));
+            }
             Output {
                 files: vec![],
-                report: json!({ "runs": textedit::text_runs(&doc, &pages) }),
+                report: json!({ "runs": runs, "paragraphs": paragraphs, "objects": objects }),
             }
         }
         "arrange" => pdf(

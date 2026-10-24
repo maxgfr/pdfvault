@@ -124,6 +124,7 @@ pub enum Item {
     Note(NoteItem),
     Highlight(BoxItem),
     Redact(BoxItem),
+    Object(ObjectItem),
 }
 
 impl Item {
@@ -136,6 +137,7 @@ impl Item {
             Item::Image(i) => i.page,
             Item::Note(i) => i.page,
             Item::Highlight(i) | Item::Redact(i) => i.page,
+            Item::Object(i) => i.page,
         }
     }
 }
@@ -180,6 +182,11 @@ impl Default for TextItem {
 /// `baseline`. Unset values come from the glyphs removed. With `find`
 /// instead of a box, the first line of the page containing it is rewritten
 /// with `find` replaced by `text`.
+///
+/// A paragraph (from `text-runs`) names its `glyphs` and, for each character
+/// of `text`, the glyph whose font, size and colour it keeps (`sources`);
+/// with `right`, the text reflows between `left` and `right`, `leading`
+/// apart, aligned by `align`.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ReplaceItem {
@@ -202,6 +209,17 @@ pub struct ReplaceItem {
     pub font_file: Option<FontRef>,
     /// Horizontal scaling, percent.
     pub hscale: Option<f32>,
+    /// The page glyphs to take out, instead of those in the box.
+    pub glyphs: Option<Vec<usize>>,
+    /// Per character of `text`: the glyph whose style it takes (-1: the
+    /// previous character's).
+    pub sources: Option<Vec<i64>>,
+    /// Reflow: lines after the first start at `left` and wrap at `right`.
+    pub left: Option<f32>,
+    pub right: Option<f32>,
+    pub leading: Option<f32>,
+    /// "left", "right", "center" or "justify".
+    pub align: Option<String>,
 }
 
 impl Default for ReplaceItem {
@@ -223,6 +241,12 @@ impl Default for ReplaceItem {
             italic: None,
             font_file: None,
             hscale: None,
+            glyphs: None,
+            sources: None,
+            left: None,
+            right: None,
+            leading: None,
+            align: None,
         }
     }
 }
@@ -230,6 +254,43 @@ impl Default for ReplaceItem {
 impl ReplaceItem {
     pub fn bounds(&self) -> [f32; 4] {
         norm(self.x, self.y, self.w, self.h)
+    }
+
+    /// Written character by character with inherited styles, maybe reflowed.
+    fn paragraph(&self) -> bool {
+        self.sources.is_some() || self.right.is_some()
+    }
+}
+
+/// An image, drawing or shape the page already has (`kind` and `index` as
+/// `text-runs` lists them): deleted, or moved by `dx`, `dy` and scaled by
+/// `sx`, `sy` about the bottom-left corner of its box.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ObjectItem {
+    pub page: usize,
+    /// "image", "form" or "path".
+    pub kind: String,
+    pub index: usize,
+    pub delete: bool,
+    pub dx: f32,
+    pub dy: f32,
+    pub sx: f32,
+    pub sy: f32,
+}
+
+impl Default for ObjectItem {
+    fn default() -> Self {
+        ObjectItem {
+            page: 0,
+            kind: "image".into(),
+            index: 0,
+            delete: false,
+            dx: 0.0,
+            dy: 0.0,
+            sx: 1.0,
+            sy: 1.0,
+        }
     }
 }
 
@@ -387,6 +448,11 @@ pub struct EditReport {
     pub substituted: usize,
     /// Rewritten lines whose old glyphs could not be taken out, only covered.
     pub covered: usize,
+    /// Images, drawings and shapes of the page moved, resized or deleted.
+    pub objects: usize,
+    /// Rewritten paragraphs now reaching lower than they did: they may run
+    /// into what follows, since nothing below moves.
+    pub overflow: usize,
     /// Pages redacted in their content (1-based).
     pub redacted_pages: Vec<usize>,
     /// Pages left for the renderer to turn into images (0-based).
@@ -674,8 +740,77 @@ fn replace_choice(
     Ok((it.clone(), glyphs, choice))
 }
 
+/// The glyphs a replace item takes out: those it names, or those in its box.
+fn replaced_glyphs(page: &Page, it: &ReplaceItem) -> Vec<usize> {
+    match &it.glyphs {
+        Some(list) => {
+            let mut v: Vec<usize> = list
+                .iter()
+                .copied()
+                .filter(|&g| g < page.glyphs.len())
+                .collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        }
+        None => textedit::glyphs_in(page, it.bounds()),
+    }
+}
+
+/// How `text` in page font `font` is written, wanting `bold` and `italic`:
+/// in that font (or a sibling of its family on the page with the wanted
+/// style), the characters it lacks from an installed copy or a bundled font.
+fn font_choice(
+    page: &Page,
+    font: usize,
+    bold: bool,
+    italic: bool,
+    text: &str,
+    subs: &[Substitute],
+) -> Choice {
+    let f = &page.fonts[font];
+    let font = if f.bold == bold && f.italic == italic {
+        Some(font)
+    } else {
+        page.fonts.iter().position(|g| {
+            g.bold == bold && g.italic == italic && same_name(&g.family_name, &f.family_name)
+        })
+    };
+    let key = textedit::bundled_key(f.family, bold, italic);
+    let Some(font) = font else {
+        return Choice::Bundled(key);
+    };
+    let Some(pieces) = pieces(page, font, text) else {
+        return Choice::Bundled(key);
+    };
+    if pieces.iter().all(|p| matches!(p, Piece::Codes(_))) {
+        return Choice::Original {
+            font,
+            lines: vec![pieces],
+            fallback: None,
+        };
+    }
+    if let Some(s) = subs
+        .iter()
+        .find(|s| same_name(&s.name, &page.fonts[font].base))
+    {
+        return Choice::Substitute(
+            FontRef {
+                file: s.file,
+                name: Some(s.name.clone()),
+            },
+            key,
+        );
+    }
+    Choice::Original {
+        font,
+        lines: vec![pieces],
+        fallback: Some(Box::new(Choice::Bundled(key))),
+    }
+}
+
 fn choose(page: &Page, it: &ReplaceItem, subs: &[Substitute]) -> Result<(Vec<usize>, Choice)> {
-    let glyphs = textedit::glyphs_in(page, it.bounds());
+    let glyphs = replaced_glyphs(page, it);
     if let Some(f) = &it.font_file {
         return Ok((glyphs, Choice::File(f.clone(), None)));
     }
@@ -746,6 +881,222 @@ fn choose(page: &Page, it: &ReplaceItem, subs: &[Substitute]) -> Result<(Vec<usi
     Ok((glyphs, backup()))
 }
 
+/// One character's style in a rewritten paragraph.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CharStyle {
+    font: usize,
+    size: f32,
+    color: [f32; 3],
+    hscale: f32,
+    bold: bool,
+    italic: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FragKind {
+    Word,
+    Space,
+    Break,
+}
+
+/// A stretch of one style between spaces, with the font it is written in.
+#[derive(Debug, Clone)]
+struct Frag {
+    kind: FragKind,
+    text: String,
+    style: CharStyle,
+    choice: Choice,
+}
+
+/// What a replace item writes: one style per line, or a paragraph of styled pieces.
+#[derive(Debug, Clone)]
+enum Rewrite {
+    Line(Choice),
+    Paragraph(Vec<Frag>),
+}
+
+impl Rewrite {
+    fn choices(&self) -> Vec<&Choice> {
+        match self {
+            Rewrite::Line(c) => vec![c],
+            Rewrite::Paragraph(frags) => frags.iter().map(|f| &f.choice).collect(),
+        }
+    }
+}
+
+/// The style of each character of a paragraph's new text.
+fn char_styles(page: &Page, it: &ReplaceItem, glyphs: &[usize]) -> Result<Vec<CharStyle>> {
+    let first = glyphs
+        .first()
+        .map(|&g| &page.glyphs[g])
+        .ok_or_else(|| Error::option("the paragraph has no glyphs to rewrite"))?;
+    let of = |g: &crate::interp::Glyph| CharStyle {
+        font: g.font,
+        size: g.size,
+        color: g.color,
+        hscale: g.hscale,
+        bold: page.fonts[g.font].bold,
+        italic: page.fonts[g.font].italic,
+    };
+    let base = of(first);
+    let sources = it.sources.clone().unwrap_or_default();
+    let color = it.color.as_deref().map(parse_color).transpose()?;
+    let scale = it.size.map(|s| s / base.size).unwrap_or(1.0);
+    let mut out = Vec::with_capacity(it.text.chars().count());
+    let mut prev = base;
+    for (i, _) in it.text.chars().enumerate() {
+        let mut st = match sources.get(i) {
+            Some(&s) if s >= 0 && (s as usize) < page.glyphs.len() => of(&page.glyphs[s as usize]),
+            _ => prev,
+        };
+        prev = st;
+        st.size *= scale;
+        if let Some(c) = color {
+            st.color = c;
+        }
+        if let Some(h) = it.hscale {
+            st.hscale = h;
+        }
+        st.bold = it.bold.unwrap_or(st.bold);
+        st.italic = it.italic.unwrap_or(st.italic);
+        out.push(st);
+    }
+    Ok(out)
+}
+
+/// A paragraph's text cut into words, spaces and line breaks of one style each.
+fn fragments(
+    page: &Page,
+    it: &ReplaceItem,
+    glyphs: &[usize],
+    subs: &[Substitute],
+) -> Result<Vec<Frag>> {
+    let styles = char_styles(page, it, glyphs)?;
+    let explicit = match it.font.as_str() {
+        "auto" => None,
+        f => Some(textedit::parse_family(f).ok_or_else(|| {
+            Error::option(format!("unknown font '{f}' (auto, sans, serif or mono)"))
+        })?),
+    };
+    let mut out: Vec<Frag> = vec![];
+    for (c, st) in it.text.chars().zip(styles) {
+        let kind = match c {
+            '\n' => FragKind::Break,
+            c if c.is_whitespace() => FragKind::Space,
+            _ => FragKind::Word,
+        };
+        match out.last_mut() {
+            Some(last) if last.kind == kind && kind != FragKind::Break && last.style == st => {
+                last.text.push(c)
+            }
+            _ => out.push(Frag {
+                kind,
+                text: c.to_string(),
+                style: st,
+                choice: Choice::Bundled(String::new()),
+            }),
+        }
+    }
+    for f in &mut out {
+        f.choice = if let Some(file) = &it.font_file {
+            Choice::File(file.clone(), None)
+        } else if let Some(family) = explicit {
+            Choice::Bundled(textedit::bundled_key(family, f.style.bold, f.style.italic))
+        } else if f.kind == FragKind::Break {
+            Choice::Bundled(textedit::bundled_key(
+                page.fonts[f.style.font].family,
+                f.style.bold,
+                f.style.italic,
+            ))
+        } else {
+            font_choice(
+                page,
+                f.style.font,
+                f.style.bold,
+                f.style.italic,
+                &f.text,
+                subs,
+            )
+        };
+    }
+    Ok(out)
+}
+
+/// What a replace item takes out and writes.
+fn rewrite(
+    page: &Page,
+    index: usize,
+    it: &ReplaceItem,
+    subs: &[Substitute],
+) -> Result<(ReplaceItem, Vec<usize>, Rewrite)> {
+    if !it.paragraph() {
+        let (placed, glyphs, choice) = replace_choice(page, index, it, subs)?;
+        return Ok((placed, glyphs, Rewrite::Line(choice)));
+    }
+    let glyphs = replaced_glyphs(page, it);
+    let frags = fragments(page, it, &glyphs, subs)?;
+    Ok((it.clone(), glyphs, Rewrite::Paragraph(frags)))
+}
+
+/// What moving, resizing or deleting one of the page's objects does to its content.
+fn object_edit(page: &Page, ob: &ObjectItem, r: &mut Removal) -> Result<()> {
+    let missing = || {
+        Error::option(format!(
+            "page {} has no {} {}",
+            ob.page + 1,
+            ob.kind,
+            ob.index
+        ))
+    };
+    let (stream, first, last, ctm, bbox) = match ob.kind.as_str() {
+        "image" => {
+            let im = page.images.get(ob.index).ok_or_else(missing)?;
+            if ob.delete {
+                r.images.insert(ob.index);
+                return Ok(());
+            }
+            (im.stream, im.op, im.op, im.matrix, im.bbox)
+        }
+        "form" => {
+            let f = page.forms.get(ob.index).ok_or_else(missing)?;
+            if ob.delete {
+                r.forms.insert(ob.index);
+                return Ok(());
+            }
+            (f.stream, f.op, f.op, f.ctm, f.bbox)
+        }
+        "path" => {
+            let pu = page.paths.get(ob.index).ok_or_else(missing)?;
+            if ob.delete {
+                r.paths.insert(ob.index);
+                return Ok(());
+            }
+            (pu.stream, pu.first, pu.paint, pu.ctm, pu.bbox)
+        }
+        other => {
+            return Err(Error::option(format!(
+                "unknown object kind '{other}' (image, form or path)"
+            )));
+        }
+    };
+    // In page space: scale about the box's corner, then move. In the user
+    // space the operation runs in, that is ctm · t · ctm⁻¹.
+    let (x0, y0) = (bbox[0], bbox[1]);
+    let t = [
+        ob.sx,
+        0.0,
+        0.0,
+        ob.sy,
+        x0 - x0 * ob.sx + ob.dx,
+        y0 - y0 * ob.sy + ob.dy,
+    ];
+    let inv = interp::invert(&ctm)
+        .ok_or_else(|| Error::Unsupported("a flattened object cannot move".into()))?;
+    let m = interp::mul(&interp::mul(&ctm, &t), &inv);
+    r.transforms.push((stream, first, last, m));
+    Ok(())
+}
+
 fn page_of(ids: &[ObjectId], p: usize) -> Result<ObjectId> {
     ids.get(p).copied().ok_or_else(|| {
         Error::option(format!(
@@ -773,22 +1124,25 @@ pub fn plan(pdf_bytes: &[u8], o: &EditOptions) -> Result<EditPlan> {
                 let page = pages
                     .entry(r.page)
                     .or_insert_with(|| interp::interpret(&doc, id));
-                let choice = replace_choice(page, r.page, r, &o.substitutes)?.2;
-                if let Choice::Original {
-                    font,
-                    fallback: Some(_),
-                    ..
-                } = &choice
-                {
-                    let f = &page.fonts[*font];
-                    wanted.insert(WantedFont {
-                        name: f.base.clone(),
-                        family: f.family_name.clone(),
-                        bold: f.bold,
-                        italic: f.italic,
-                    });
+                let (_, _, written) = rewrite(page, r.page, r, &o.substitutes)?;
+                for choice in written.choices() {
+                    if let Choice::Original {
+                        font,
+                        fallback: Some(_),
+                        ..
+                    } = choice
+                    {
+                        let f = &page.fonts[*font];
+                        wanted.insert(WantedFont {
+                            name: f.base.clone(),
+                            family: f.family_name.clone(),
+                            bold: f.bold,
+                            italic: f.italic,
+                        });
+                    }
+                    fonts.extend(choice.bundled());
                 }
-                choice
+                continue;
             }
             _ => continue,
         };
@@ -874,6 +1228,12 @@ impl<'a> Fonts<'a> {
         self.slot(&FontRef { file, name: None })
     }
 
+    /// The width of `text` written with `choice`.
+    fn measure(&mut self, choice: &Choice, text: &str, size: f32) -> Result<f32> {
+        let chain = self.chain(choice)?;
+        Ok(self.ts.layout(&chain, text, size)?.width)
+    }
+
     /// One stretch of text drawn from (`x`, `y`); returns the operators and its width.
     #[allow(clippy::too_many_arguments)]
     fn piece(
@@ -937,6 +1297,12 @@ impl Fonts {
         _: f32,
         _: f32,
     ) -> Result<Vec<u8>> {
+        Err(Error::Unsupported(
+            "writing text needs the typeset feature".into(),
+        ))
+    }
+
+    fn measure(&mut self, _: &Choice, _: &str, _: f32) -> Result<f32> {
         Err(Error::Unsupported(
             "writing text needs the typeset feature".into(),
         ))
@@ -1014,6 +1380,195 @@ fn original_lines(
     Ok(out)
 }
 
+/// Where a rewritten paragraph goes.
+struct ParagraphLayout<'a> {
+    start: f32,
+    left: f32,
+    right: f32,
+    baseline: f32,
+    leading: f32,
+    align: &'a str,
+}
+
+/// One fragment drawn (or only measured, without `doc`) from (`x`, `y`).
+#[allow(clippy::too_many_arguments)]
+fn draw_frag(
+    doc: Option<(&mut Document, ObjectId)>,
+    info: &Page,
+    frag: &Frag,
+    x: f32,
+    y: f32,
+    fonts: &mut Fonts,
+) -> Result<(Vec<u8>, f32)> {
+    let st = &frag.style;
+    match &frag.choice {
+        Choice::Original {
+            font,
+            lines,
+            fallback,
+        } => {
+            let f = &info.fonts[*font];
+            let k = st.size * st.hscale / 100.0;
+            match doc {
+                None => {
+                    let mut w = 0.0;
+                    for piece in lines.iter().flatten() {
+                        w += match piece {
+                            Piece::Codes(codes) => {
+                                codes.iter().map(|&(c, len)| f.width(c, len)).sum::<f32>() * k
+                            }
+                            Piece::Text(t) => {
+                                let choice = fallback.as_deref().ok_or_else(|| {
+                                    Error::Unsupported("no font for these characters".into())
+                                })?;
+                                fonts.measure(choice, t, st.size)?
+                            }
+                        };
+                    }
+                    Ok((vec![], w))
+                }
+                Some((doc, page)) => {
+                    let ops = original_lines(
+                        doc,
+                        page,
+                        info,
+                        *font,
+                        lines,
+                        fallback.as_deref(),
+                        fonts,
+                        (x, y, st.size, st.hscale),
+                    )?;
+                    let (_, w) = draw_frag(None, info, frag, x, y, fonts)?;
+                    Ok((ops, w))
+                }
+            }
+        }
+        choice => match doc {
+            None => Ok((vec![], fonts.measure(choice, &frag.text, st.size)?)),
+            Some((doc, page)) => fonts.piece(doc, page, choice, &frag.text, x, y, st.size),
+        },
+    }
+}
+
+/// A paragraph reflowed into lines and drawn, each fragment in its colour;
+/// returns the operators and how many lines it took.
+fn draw_paragraph(
+    doc: &mut Document,
+    page: ObjectId,
+    info: &Page,
+    frags: &[Frag],
+    l: &ParagraphLayout,
+    fonts: &mut Fonts,
+) -> Result<(Vec<u8>, usize)> {
+    let mut widths = Vec::with_capacity(frags.len());
+    for f in frags {
+        widths.push(match f.kind {
+            FragKind::Break => 0.0,
+            _ => draw_frag(None, info, f, 0.0, 0.0, fonts)?.1,
+        });
+    }
+    // Lines of word groups: a word is a run of fragments without a space.
+    struct LineOut {
+        items: Vec<(Vec<usize>, f32)>,
+        forced: bool,
+    }
+    let mut lines: Vec<LineOut> = vec![];
+    let mut cur: Vec<(Vec<usize>, f32)> = vec![];
+    let mut word: Vec<usize> = vec![];
+    let mut space = 0.0f32;
+    let mut used = 0.0f32;
+    let limit = |line: usize| l.right - if line == 0 { l.start } else { l.left };
+    let flush_word = |cur: &mut Vec<(Vec<usize>, f32)>,
+                      lines: &mut Vec<LineOut>,
+                      word: &mut Vec<usize>,
+                      space: &mut f32,
+                      used: &mut f32| {
+        if word.is_empty() {
+            return;
+        }
+        let w: f32 = word.iter().map(|&i| widths[i]).sum();
+        let gap = if cur.is_empty() { 0.0 } else { *space };
+        if !cur.is_empty() && *used + gap + w > limit(lines.len()) + 0.01 {
+            lines.push(LineOut {
+                items: std::mem::take(cur),
+                forced: false,
+            });
+            *used = 0.0;
+            cur.push((std::mem::take(word), w));
+            *used = w;
+        } else {
+            *used += gap + w;
+            cur.push((std::mem::take(word), w));
+        }
+        *space = 0.0;
+    };
+    for (i, f) in frags.iter().enumerate() {
+        match f.kind {
+            FragKind::Word => word.push(i),
+            FragKind::Space => {
+                flush_word(&mut cur, &mut lines, &mut word, &mut space, &mut used);
+                space += widths[i];
+            }
+            FragKind::Break => {
+                flush_word(&mut cur, &mut lines, &mut word, &mut space, &mut used);
+                lines.push(LineOut {
+                    items: std::mem::take(&mut cur),
+                    forced: true,
+                });
+                used = 0.0;
+                space = 0.0;
+            }
+        }
+    }
+    flush_word(&mut cur, &mut lines, &mut word, &mut space, &mut used);
+    lines.push(LineOut {
+        items: cur,
+        forced: true,
+    });
+
+    // The space between words, in the style of the paragraph's first space.
+    let gap = frags
+        .iter()
+        .zip(&widths)
+        .find(|(f, _)| f.kind == FragKind::Space)
+        .map(|(f, w)| *w / f.text.chars().count().max(1) as f32)
+        .unwrap_or(0.0);
+    let mut out = vec![];
+    let count = lines.len();
+    for (n, line) in lines.iter().enumerate() {
+        let x0 = if n == 0 { l.start } else { l.left };
+        let content: f32 = line.items.iter().map(|(_, w)| w).sum::<f32>()
+            + gap * line.items.len().saturating_sub(1) as f32;
+        let free = (limit(n) - content).max(0.0);
+        let free = if free.is_finite() { free } else { 0.0 };
+        let gaps = line.items.len().saturating_sub(1);
+        let (offset, extra) = match l.align {
+            "right" => (free, 0.0),
+            "center" => (free / 2.0, 0.0),
+            "justify" if !line.forced && n + 1 < count && gaps > 0 => (0.0, free / gaps as f32),
+            _ => (0.0, 0.0),
+        };
+        let y = l.baseline - l.leading * n as f32;
+        let mut x = x0 + offset;
+        for (k, (word, w)) in line.items.iter().enumerate() {
+            if k > 0 {
+                x += gap + extra;
+            }
+            let mut pen = x;
+            for &i in word {
+                let f = &frags[i];
+                out.extend(format!("q {} rg\n", rgb(f.style.color)).into_bytes());
+                let (ops, fw) = draw_frag(Some((doc, page)), info, f, pen, y, fonts)?;
+                out.extend(ops);
+                out.extend(b"Q\n");
+                pen += fw;
+            }
+            x += w;
+        }
+    }
+    Ok((out, count))
+}
+
 /// Apply `o` to the PDF in `inputs[0]`; `inputs[1..]` are the attachments
 /// items refer to (images, font files, the bundled fonts).
 pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)> {
@@ -1033,7 +1588,8 @@ pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)
     // 1. What leaves the content, decided on the pages as they were.
     let mut pages: BTreeMap<usize, Page> = BTreeMap::new();
     let mut boxes: BTreeMap<usize, Vec<[f32; 4]>> = BTreeMap::new();
-    let mut replaces: Vec<(usize, Vec<usize>, Choice, ReplaceItem)> = vec![];
+    let mut replaces: Vec<(usize, Vec<usize>, Rewrite, ReplaceItem)> = vec![];
+    let mut objects: BTreeMap<usize, Vec<&ObjectItem>> = BTreeMap::new();
     for (i, item) in o.items.iter().enumerate() {
         match item {
             Item::Replace(r) => {
@@ -1042,8 +1598,19 @@ pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)
                 let page = pages
                     .entry(r.page)
                     .or_insert_with(|| interp::interpret(&doc, id));
-                let (placed, glyphs, choice) = replace_choice(page, r.page, r, &o.substitutes)?;
-                replaces.push((i, glyphs, choice, placed));
+                let (placed, glyphs, written) = rewrite(page, r.page, r, &o.substitutes)?;
+                replaces.push((i, glyphs, written, placed));
+            }
+            Item::Object(ob) => {
+                finite(&[ob.dx, ob.dy, ob.sx, ob.sy])?;
+                if ob.sx <= 0.0 || ob.sy <= 0.0 {
+                    return Err(Error::option("an object's scale must be positive"));
+                }
+                let id = page_of(&ids, ob.page)?;
+                pages
+                    .entry(ob.page)
+                    .or_insert_with(|| interp::interpret(&doc, id));
+                objects.entry(ob.page).or_default().push(ob);
             }
             Item::Redact(b) => {
                 finite(&[b.x, b.y, b.w, b.h])?;
@@ -1089,6 +1656,10 @@ pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)
         let redacting = redaction.is_some();
         let mut all = redaction.unwrap_or_default();
         all.glyphs.extend(text_glyphs.glyphs.iter().copied());
+        for ob in objects.get(&p).into_iter().flatten() {
+            object_edit(page, ob, &mut all)?;
+            report.objects += 1;
+        }
         match scrub::apply(&mut doc, id, page, &all) {
             Ok(()) => {
                 if redacting {
@@ -1150,8 +1721,73 @@ pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)
                 out.extend(b"Q\n");
             }
             Item::Replace(_) => {
-                let (_, glyphs, choice, r) = replace_at.next().expect("one entry per replace item");
+                let (_, glyphs, written, r) =
+                    replace_at.next().expect("one entry per replace item");
                 let info = &pages[&p];
+                if let Rewrite::Paragraph(frags) = written {
+                    out.extend(b"q\n");
+                    if covered.contains(&index) {
+                        report.covered += 1;
+                        let b = r.bounds();
+                        out.extend(
+                            format!(
+                                "1 1 1 rg {} {} {} {} re f\n",
+                                n(b[0] - 1.0),
+                                n(b[1] - 1.0),
+                                n(b[2] - b[0] + 2.0),
+                                n(b[3] - b[1] + 2.0)
+                            )
+                            .into_bytes(),
+                        );
+                    }
+                    let first = glyphs.first().map(|&g| &info.glyphs[g]);
+                    let start = r.start.or(first.map(|g| g.origin[0])).unwrap_or(r.x);
+                    let baseline = r.baseline.or(first.map(|g| g.origin[1])).unwrap_or(r.y);
+                    let size = frags.first().map(|f| f.style.size).unwrap_or(12.0);
+                    let layout = ParagraphLayout {
+                        start,
+                        left: r.left.unwrap_or(start),
+                        right: r.right.unwrap_or(f32::INFINITY),
+                        baseline,
+                        leading: r.leading.unwrap_or(size * TEXT_LINE),
+                        align: r.align.as_deref().unwrap_or("left"),
+                    };
+                    finite(&[layout.start, layout.left, layout.baseline, layout.leading])?;
+                    let (body, lines) =
+                        draw_paragraph(&mut doc, page, info, frags, &layout, &mut fonts)?;
+                    out.extend(body);
+                    out.extend(b"Q\n");
+                    let old_last = glyphs
+                        .iter()
+                        .map(|&g| info.glyphs[g].origin[1])
+                        .fold(f32::MAX, f32::min);
+                    let new_last =
+                        layout.baseline - layout.leading * lines.saturating_sub(1) as f32;
+                    if old_last.is_finite() && new_last < old_last - layout.leading * 0.5 {
+                        report.overflow += 1;
+                    }
+                    let choices: Vec<&Choice> = frags
+                        .iter()
+                        .filter(|f| f.kind == FragKind::Word)
+                        .map(|f| &f.choice)
+                        .collect();
+                    if choices.iter().any(|c| matches!(c, Choice::Substitute(..))) {
+                        report.substituted += 1;
+                    } else if choices
+                        .iter()
+                        .all(|c| matches!(c, Choice::Original { fallback: None, .. }))
+                    {
+                        report.same_font += 1;
+                    } else {
+                        report.mixed += 1;
+                    }
+                    report.replaced += 1;
+                    ops.entry(p).or_default().extend(out);
+                    continue;
+                }
+                let Rewrite::Line(choice) = written else {
+                    unreachable!()
+                };
                 let first = glyphs.first().map(|&g| &info.glyphs[g]);
                 let b = r.bounds();
                 let size = r.size.or(first.map(|g| g.size)).unwrap_or(b[3] - b[1]);
@@ -1327,6 +1963,7 @@ pub fn edit(inputs: &[Vec<u8>], o: &EditOptions) -> Result<(Vec<u8>, EditReport)
                 report.annotations += 1;
                 continue;
             }
+            Item::Object(_) => continue,
             Item::Redact(b) => {
                 let r = b.bounds();
                 black.entry(p).or_default().extend(
@@ -1706,6 +2343,175 @@ mod tests {
             q.glyphs.iter().all(|g| g.font == first),
             "one font for the whole line"
         );
+    }
+
+    /// A page with a two-line paragraph whose first words are bold.
+    fn styled_pdf() -> Vec<u8> {
+        use lopdf::dictionary;
+        let mut doc = lopdf::Document::with_version("1.7");
+        let regular = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica", "Encoding" => "WinAnsiEncoding",
+        });
+        let bold = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica-Bold", "Encoding" => "WinAnsiEncoding",
+        });
+        let content = doc.add_object(Stream::new(
+            Dictionary::new(),
+            b"BT /B 12 Tf 72 700 Td (Montant total :) Tj /R 12 Tf ( 4 250 euros, regle le 3 mars) Tj ET\n\
+              BT /R 12 Tf 72 685 Td (par virement bancaire.) Tj ET"
+                .to_vec(),
+        ));
+        fixtures::single_page(
+            &mut doc,
+            content,
+            dictionary! { "Font" => dictionary! { "R" => regular, "B" => bold } },
+        );
+        pdf::save(&mut doc).unwrap()
+    }
+
+    fn paragraph_of(bytes: &[u8], starts: &str) -> crate::paragraphs::Paragraph {
+        let doc = pdf::load(bytes, None).unwrap();
+        let page = interp::interpret(&doc, pdf::page_ids(&doc)[0]);
+        crate::paragraphs::paragraphs_of(&page, 0)
+            .into_iter()
+            .find(|p| p.text.starts_with(starts))
+            .unwrap()
+    }
+
+    /// The sources of `new` when `old` became it by changing its end: the
+    /// common start keeps its glyphs, the rest takes the previous one's.
+    fn sources_for(p: &crate::paragraphs::Paragraph, new: &str) -> Vec<i64> {
+        let old: Vec<char> = p.text.chars().collect();
+        let common = new.chars().zip(&old).take_while(|(a, b)| a == *b).count();
+        new.chars()
+            .enumerate()
+            .map(|(i, _)| if i < common { p.sources[i] } else { -1 })
+            .collect()
+    }
+
+    #[test]
+    fn a_paragraph_reflows_and_keeps_its_bold_words() {
+        let pdf = styled_pdf();
+        let p = paragraph_of(&pdf, "Montant total");
+        assert_eq!(
+            p.text,
+            "Montant total : 4 250 euros, regle le 3 mars par virement bancaire."
+        );
+        assert_eq!((p.lines, p.leading), (2, 15.0));
+        let text = "Montant total : 4 250 euros, regle le 3 mars par virement bancaire, avec un supplement de livraison.";
+        let item = serde_json::json!({
+            "type": "replace", "page": 0, "x": p.x, "y": p.y, "w": p.w, "h": p.h,
+            "glyphs": p.glyphs, "sources": sources_for(&p, text), "text": text,
+            "start": p.start, "left": p.left, "right": p.left + 250.0,
+            "baseline": p.baseline, "leading": p.leading, "align": "left",
+        });
+        let mut o: EditOptions =
+            serde_json::from_value(serde_json::json!({ "items": [item] })).unwrap();
+        let inputs = with_fonts(pdf, vec![], &mut o);
+        let (out, rep) = edit(&inputs, &o).unwrap();
+        assert_eq!(
+            (rep.replaced, rep.same_font, rep.overflow),
+            (1, 1, 1),
+            "one more line than before"
+        );
+        qpdf_check(&out);
+        let after = paragraph_of(&out, "Montant total");
+        assert_eq!(after.text, text);
+        assert!(after.lines >= 3, "{} lines", after.lines);
+        assert!(after.right <= p.left + 250.5 && (after.left - p.left).abs() < 0.01);
+        assert!((after.leading - 15.0).abs() < 0.01 && (after.baseline - p.baseline).abs() < 0.01);
+        let doc = pdf::load(&out, None).unwrap();
+        let page = interp::interpret(&doc, pdf::page_ids(&doc)[0]);
+        let fonts: Vec<(String, &str)> = page
+            .glyphs
+            .iter()
+            .map(|g| {
+                (
+                    g.text.clone().unwrap_or_default(),
+                    page.fonts[g.font].base.as_str(),
+                )
+            })
+            .collect();
+        assert!(
+            fonts.iter().take(13).all(|(_, f)| *f == "Helvetica-Bold"),
+            "{fonts:?}"
+        );
+        assert!(
+            fonts.iter().skip(14).all(|(_, f)| *f == "Helvetica"),
+            "{fonts:?}"
+        );
+    }
+
+    #[test]
+    fn a_justified_paragraph_stays_justified() {
+        let pdf = fixtures::text_pdf(1);
+        let p = paragraph_of(&pdf, "The quick");
+        let text = "The quick brown fox jumps over the lazy dog, then naps in the warm afternoon sun while the farmer reads.";
+        let item = serde_json::json!({
+            "type": "replace", "page": 0, "x": p.x, "y": p.y, "w": p.w, "h": p.h,
+            "glyphs": p.glyphs, "sources": sources_for(&p, text), "text": text,
+            "start": p.start, "left": p.left, "right": p.left + 200.0,
+            "baseline": p.baseline, "leading": p.leading, "align": "justify",
+        });
+        let mut o: EditOptions =
+            serde_json::from_value(serde_json::json!({ "items": [item] })).unwrap();
+        let inputs = with_fonts(pdf, vec![], &mut o);
+        let (out, _) = edit(&inputs, &o).unwrap();
+        let doc = pdf::load(&out, None).unwrap();
+        let page = interp::interpret(&doc, pdf::page_ids(&doc)[0]);
+        let lines = crate::paragraphs::lines_of(&page);
+        let body: Vec<_> = lines.iter().filter(|l| l.size < 13.0).collect();
+        assert!(body.len() >= 3);
+        for l in &body[..body.len() - 1] {
+            assert!(
+                (l.end - (p.left + 200.0)).abs() < 0.5,
+                "line ends at {}",
+                l.end
+            );
+        }
+        assert!(
+            body.last().unwrap().end < p.left + 199.0,
+            "the last line is not stretched"
+        );
+    }
+
+    #[test]
+    fn the_page_own_images_and_shapes_move_and_go() {
+        // photo.pdf: one image on page 1, at (36, 36), 360 × 240 points.
+        let o = parse(
+            r#"{ "items": [{ "type": "object", "page": 0, "kind": "image", "index": 0, "dx": 100, "dy": 50, "sx": 0.5, "sy": 0.5 }] }"#,
+        );
+        let (out, rep) = edit(&[fixtures::photo_pdf()], &o).unwrap();
+        assert_eq!(rep.objects, 1);
+        qpdf_check(&out);
+        let doc = pdf::load(&out, None).unwrap();
+        let page = interp::interpret(&doc, pdf::page_ids(&doc)[0]);
+        let b = page.images[0].bbox;
+        for (got, want) in b.iter().zip([136.0, 86.0, 316.0, 206.0]) {
+            assert!((got - want).abs() < 0.01, "{b:?}");
+        }
+
+        let mut d = lopdf::Document::with_version("1.7");
+        let content = d.add_object(Stream::new(
+            Dictionary::new(),
+            b"1 0 0 rg 100 100 50 50 re f 0 0 1 rg 300 300 40 40 re f".to_vec(),
+        ));
+        fixtures::single_page(&mut d, content, Dictionary::new());
+        let shapes = pdf::save(&mut d).unwrap();
+        let listed = textedit::objects_of(&interp::interpret(&d, pdf::page_ids(&d)[0]), 0);
+        assert_eq!(listed.len(), 2);
+        let o = parse(
+            r#"{ "items": [{ "type": "object", "page": 0, "kind": "path", "index": 0, "delete": true }] }"#,
+        );
+        let (out, _) = edit(&[shapes], &o).unwrap();
+        let doc = pdf::load(&out, None).unwrap();
+        let page = interp::interpret(&doc, pdf::page_ids(&doc)[0]);
+        assert_eq!(page.paths.len(), 1);
+        assert_eq!(page.paths[0].bbox, [300.0, 300.0, 340.0, 340.0]);
+        let bad = parse(
+            r#"{ "items": [{ "type": "object", "page": 0, "kind": "image", "index": 7, "delete": true }] }"#,
+        );
+        assert!(edit(&[fixtures::photo_pdf()], &bad).is_err());
     }
 
     #[test]

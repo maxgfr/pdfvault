@@ -6,6 +6,8 @@ export { categories, outputName, toolById, tools, withDefaults } from "./tools.t
 export type { Category, Field, InputKind, Options, Progress, Tool } from "./tools.ts";
 export type { CompressReport, ImageReport } from "./reports.ts";
 export { NOTE_SIZE, TEXT_ASCENT, TEXT_LINE, missingCharacters, parseEdits } from "./edit.ts";
-export type { EditItem, EditOps, EditReport, FontRef, FormField, TextRun } from "./edit.ts";
+export type { EditItem, EditOps, EditReport, FontRef, FormField, PageObject, Paragraph, TextRun } from "./edit.ts";
+export { previewPages } from "./preview.ts";
+export type { PreviewPage } from "./preview.ts";
 export { BUNDLED_FONTS, isFontFile, isFontKey } from "./fonts.ts";
 export type { FontFile, FontKey } from "./fonts.ts";

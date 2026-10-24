@@ -1,4 +1,4 @@
-import { EngineError, isFontFile, missingCharacters, outputName, type EditReport, type FormField, type TextRun } from "@pdfvault/engine";
+import { EngineError, isFontFile, missingCharacters, outputName, type EditReport, type FormField, type PageObject, type Paragraph } from "@pdfvault/engine";
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { download, type InFile } from "../action-panel.tsx";
 import { Icon } from "../icons.tsx";
@@ -7,8 +7,8 @@ import { coreReport, runJob, warmUp } from "../runner.ts";
 import { Drop } from "../tool-page.tsx";
 import { vault } from "../vault.ts";
 import { workspace } from "../workspace.ts";
-import { canQueryLocalFonts, findInstalledFonts, findLocalFont, type ExtraFont, type Family } from "./fonts.ts";
-import { initialDoc, sources, styleOf, toOps, useHistory, moveItem, type Item, type SrcPage, type StampImage, type ToolName } from "./model.ts";
+import { canQueryLocalFonts, findInstalledFonts, findLocalFont, knownInstalledFonts, type ExtraFont, type Family } from "./fonts.ts";
+import { initialDoc, pageEdits, sources, styleOf, toOps, useHistory, moveItem, type Doc, type Item, type SrcPage, type StampImage, type ToolName } from "./model.ts";
 import { PageCanvas, type Style } from "./page-canvas.tsx";
 import { ImagePicker } from "./signature-pad.tsx";
 import { Thumbs } from "./thumbs.tsx";
@@ -25,12 +25,17 @@ interface Info {
 }
 
 const TOOLS: { id: ToolName; label: string; icon: string; hint: string }[] = [
-  { id: "select", label: "Select", icon: "cursor", hint: "Select, move and resize what you added. Double-click text to change it." },
+  {
+    id: "select",
+    label: "Select",
+    icon: "cursor",
+    hint: "Select, move and resize what you added and the page's own images and shapes; Delete removes them. Double-click text to change it.",
+  },
   {
     id: "edittext",
     label: "Edit text",
     icon: "edittext",
-    hint: "Click a line of the document's text to change it; empty it to remove it. To keep the document's fonts exactly, the browser may ask to use the fonts installed on this device.",
+    hint: "Click a paragraph of the document to change it: the text reflows and keeps its fonts. Empty it to remove it. To keep the fonts exactly, the browser may ask to use the fonts installed on this device.",
   },
   { id: "text", label: "Add text", icon: "text", hint: "Click where the text should start, then type. Any language works." },
   { id: "whiteout", label: "Whiteout", icon: "whiteout", hint: "Drag over what should disappear behind white." },
@@ -64,6 +69,16 @@ const FAMILIES: { id: Family; label: string }[] = [
 
 const ZOOMS = [50, 75, 100, 125, 150, 200];
 
+/** Remove an item; for one of the page's own objects, mark it deleted (and a second time, restore it). */
+function drop(d: Doc, id: string): Doc {
+  const it = d.items.find((i) => i.id === id);
+  if (it?.type === "object" && !it.delete) return { ...d, items: d.items.map((i) => (i.id === id ? { ...it, delete: true } : i)) };
+  return { ...d, items: d.items.filter((i) => i.id !== id) };
+}
+
+/** How long edits settle before the engine redraws the page. */
+const PREVIEW_DELAY = 350;
+
 export function EditorPage() {
   const [file, setFile] = useState<Source | null>(() => {
     const f = workspace.editing ? workspace.get(workspace.editing) : undefined;
@@ -72,7 +87,11 @@ export function EditorPage() {
   });
   const [pages, setPages] = useState<SrcPage[] | null>(null);
   const [fields, setFields] = useState<FormField[]>([]);
-  const [runs, setRuns] = useState<TextRun[]>([]);
+  const [paragraphs, setParagraphs] = useState<Paragraph[]>([]);
+  const [objects, setObjects] = useState<PageObject[]>([]);
+  // The engine's rendering of pages with rewritten text or moved objects.
+  const [previews, setPreviews] = useState<Record<number, { url: string; key: string; overflow: number }>>({});
+  const previewJobs = useRef<Record<number, { key: string; abort: AbortController; timer: ReturnType<typeof setTimeout> }>>({});
   const [extraFonts, setExtraFonts] = useState<ExtraFont[]>([]);
   const [missing, setMissing] = useState<string | null>(null);
   const [needsPassword, setNeedsPassword] = useState(false);
@@ -127,9 +146,9 @@ export function EditorPage() {
       }
       const form = await coreReport<{ fields: FormField[] }>("form-fields", f.bytes, opts);
       // The page's own text, for Edit text, read while the pages render.
-      const lines = coreReport<{ runs: TextRun[] }>("text-runs", f.bytes, opts).then(
-        (r) => r.runs,
-        () => [] as TextRun[],
+      const lines = coreReport<{ paragraphs: Paragraph[]; objects: PageObject[] }>("text-runs", f.bytes, opts).then(
+        (r) => r,
+        () => ({ paragraphs: [] as Paragraph[], objects: [] as PageObject[] }),
       );
       // Sharp on high-density screens without rendering huge bitmaps.
       const dpi = Math.round(96 * Math.min(window.devicePixelRatio || 1, 2));
@@ -144,7 +163,10 @@ export function EditorPage() {
       });
       setFile({ ...f, password: opts.password });
       setFields(form.fields);
-      setRuns(await lines);
+      const found = await lines;
+      setParagraphs(found.paragraphs ?? []);
+      setObjects(found.objects ?? []);
+      setPreviews({});
       setPages(srcPages);
       reset(initialDoc(srcPages.length));
       setSelected(null);
@@ -190,7 +212,9 @@ export function EditorPage() {
   const style = styles[styleTarget ?? "text"] ?? DEFAULT_STYLE.text!;
   // What the text controls show: the selected text's own values, else the tool's.
   const typed = selectedItem && (selectedItem.type === "text" || selectedItem.type === "replace") && canStyle ? selectedItem : null;
-  const shown = typed ? { ...styleOf(typed), size: typed.size ?? style.size, color: typed.color ?? style.color } : style;
+  const shown = typed
+    ? { ...styleOf(typed), size: typed.size ?? typed.look?.size ?? style.size, color: typed.color ?? typed.look?.color ?? style.color }
+    : style;
   const redactions = doc.items.filter((i) => i.type === "redact").length;
   const dirty = history.canUndo;
 
@@ -248,7 +272,7 @@ export function EditorPage() {
         redo();
       } else if ((e.key === "Delete" || e.key === "Backspace") && selected) {
         e.preventDefault();
-        commit((d) => ({ ...d, items: d.items.filter((i) => i.id !== selected) }));
+        commit((d) => drop(d, selected));
         setSelected(null);
       } else if (e.key === "Escape") {
         setSelected(null);
@@ -264,6 +288,82 @@ export function EditorPage() {
     addEventListener("keydown", key);
     return () => removeEventListener("keydown", key);
   }, [selected, commit, undo, redo]);
+
+  // The exact preview: once edits on a page settle, the engine applies them and
+  // renders that page; until then the editor shows its own approximation.
+  useEffect(() => {
+    if (!file || !pages) return;
+    const jobs = previewJobs.current;
+    const edited = new Set(doc.items.filter((it) => it.page < pages.length && pageEdits(doc, it.page).length).map((it) => it.page));
+    setPreviews((prev) => {
+      const gone = Object.keys(prev).map(Number).filter((k) => !edited.has(k));
+      if (!gone.length) return prev;
+      const next = { ...prev };
+      for (const k of gone) {
+        URL.revokeObjectURL(next[k]!.url);
+        delete next[k];
+      }
+      return next;
+    });
+    const typing = doc.items.find((i) => i.id === editing);
+    for (const src of edited) {
+      const key = JSON.stringify(pageEdits(doc, src));
+      if (previews[src]?.key === key || jobs[src]?.key === key) continue;
+      jobs[src]?.abort.abort();
+      if (jobs[src]) clearTimeout(jobs[src].timer);
+      delete jobs[src];
+      // While text on this page is being typed, wait for it to be done.
+      if (typing && typing.page === src && typing.type === "replace") continue;
+      const abort = new AbortController();
+      const timer = setTimeout(() => {
+        const dpi = Math.round(96 * Math.min(window.devicePixelRatio || 1, 2));
+        const names = [...new Set(doc.items.flatMap((i) => (i.type === "replace" && i.page === src && i.look ? [i.look.fontName] : [])))];
+        const installed = knownInstalledFonts(names);
+        const ops = {
+          items: pageEdits(doc, src),
+          fallbackFonts: extraFonts.map((f, i) => ({ file: images.length + i, name: f.postscriptName })),
+          substitutes: installed.map((f, i) => ({ name: f.name, file: images.length + extraFonts.length + i })),
+        };
+        void runJob(
+          "preview:edit",
+          [file.bytes, ...images.map((i) => i.bytes), ...extraFonts.map((f) => f.bytes), ...installed.map((f) => f.bytes)],
+          { ops, pages: [src], dpi, password: file.password },
+          ["render"],
+          () => {},
+          abort.signal,
+        )
+          .then(async (r) => {
+            if (abort.signal.aborted) return;
+            const url = URL.createObjectURL(new Blob([r.files[0]!.bytes as BlobPart], { type: "image/jpeg" }));
+            // Decoded before it replaces the page, so the swap does not flash white.
+            const decoded = new Image();
+            decoded.src = url;
+            await decoded.decode().catch(() => {});
+            if (abort.signal.aborted) return URL.revokeObjectURL(url);
+            setPreviews((prev) => {
+              if (prev[src]) URL.revokeObjectURL(prev[src].url);
+              return { ...prev, [src]: { url, key, overflow: (r.report as EditReport).overflow ?? 0 } };
+            });
+          })
+          .catch(() => {
+            // Cancelled, or characters no font has: the approximation stays.
+          })
+          .finally(() => {
+            if (jobs[src]?.abort === abort) delete jobs[src];
+          });
+      }, PREVIEW_DELAY);
+      jobs[src] = { key, abort, timer };
+    }
+  }, [doc, editing, file, pages, images, extraFonts, previews]);
+  useEffect(
+    () => () => {
+      for (const j of Object.values(previewJobs.current)) {
+        j.abort.abort();
+        clearTimeout(j.timer);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!dirty || result) return;
@@ -451,7 +551,7 @@ export function EditorPage() {
                   type="button"
                   className="icon"
                   onClick={() => {
-                    commit((d) => ({ ...d, items: d.items.filter((i) => i.id !== selectedItem.id) }));
+                    commit((d) => drop(d, selectedItem.id));
                     setSelected(null);
                   }}
                   aria-label="Delete the selection"
@@ -486,6 +586,11 @@ export function EditorPage() {
             {hint}
           </p>
 
+          {Object.values(previews).some((p) => p.overflow > 0) ? (
+            <p className="note ed-overflow" role="status">
+              A changed paragraph is now longer than it was and runs into what follows it: nothing below moves in a PDF. Shorten it or make its text smaller.
+            </p>
+          ) : null}
           {missing !== null ? (
             <div className="ed-missing" role="alert">
               <p>
@@ -542,6 +647,7 @@ export function EditorPage() {
                   ? ` (page${result.report.flattenedPages.length > 1 ? "s" : ""} ${result.report.flattenedPages.join(", ")} turned into images to be sure)`
                   : ""}
                 {result.report.covered ? ` · ${result.report.covered} line${result.report.covered > 1 ? "s" : ""} could only be covered, not removed` : ""}
+                {result.report.objects ? ` · ${result.report.objects} image${result.report.objects > 1 ? "s or shapes" : " or shape"} moved or removed` : ""}
                 {result.report.substituted ? ` · ${result.report.substituted} line${result.report.substituted > 1 ? "s" : ""} redrawn with the font installed on this device` : ""}
                 {result.report.mixed
                   ? ` · ${result.report.mixed} line${result.report.mixed > 1 ? "s" : ""} kept their font except for characters it did not include`
@@ -596,7 +702,9 @@ export function EditorPage() {
                       scale={scale}
                       items={doc.items.filter((it) => it.page === pg.src)}
                       fields={fields.filter((f) => f.page === pg.src)}
-                      runs={runs.filter((r) => r.page === pg.src)}
+                      paragraphs={paragraphs.filter((q) => q.page === pg.src)}
+                      objects={objects.filter((o) => o.page === pg.src)}
+                      preview={previews[pg.src]?.key === JSON.stringify(pageEdits(doc, pg.src)) ? previews[pg.src]!.url : undefined}
                       values={doc.fields}
                       tool={tool}
                       style={style}

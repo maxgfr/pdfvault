@@ -58,7 +58,7 @@ function subsequence(hay: string, needle: string): boolean {
 
 const text = (pdf: string) => execFileSync(cli[0]!, [...cli.slice(1), "to-text", pdf, "--no-ocr", "--page-breaks", "-o", "-"]).toString();
 /** The PDF with object streams unpacked, so dictionaries can be searched. */
-const qdf = (pdf: string) => execFileSync("qpdf", ["--qdf", "--object-streams=disable", pdf, "-"]).toString("latin1");
+const qdf = (pdf: string) => execFileSync("qpdf", ["--qdf", "--object-streams=disable", pdf, "-"], { maxBuffer: 256 << 20 }).toString("latin1");
 
 test("text, whiteout, highlight, note, signature and page order in one save", async ({ page }) => {
   const w = await watch(page);
@@ -167,11 +167,10 @@ test("existing text is changed in place, in its own font", async ({ page }) => {
   // "Page 1": 24 pt Helvetica on the baseline at y = 720, from x = 72.
   const p = await at(page, 1, 0.15, (792 - 728) / 792);
   await page.mouse.click(p.x, p.y);
-  const line = page.getByRole("textbox", { name: "Edit this line" });
+  const line = page.getByRole("textbox", { name: "Edit this paragraph" });
   await expect(line).toHaveValue("Page 1");
   await line.fill("Première page");
   await page.keyboard.press("Escape");
-  await expect(page.locator(".ed-replace text")).toHaveText("Première page");
   await expect(page.getByLabel("Font")).toHaveValue("auto");
   const out = await save(page);
   const first = text(out).split("\f")[0]!;
@@ -195,13 +194,59 @@ test("a digit the embedded font lacks: the rest of the line keeps its font", asy
   // Baseline at 400 − 0.8 × 18 = 385.6 points from the bottom.
   const p = await at(page, 1, 0.15, (792 - 390) / 792);
   await page.mouse.click(p.x, p.y);
-  const line = page.getByRole("textbox", { name: "Edit this line" });
+  const line = page.getByRole("textbox", { name: "Edit this paragraph" });
   await expect(line).toHaveValue("Total 2025");
   await line.fill("Total 2026");
   await page.keyboard.press("Escape");
   const out = await save(page);
   await expect(page.locator(".ed-result")).toContainText("kept their font except for characters it did not include");
   expect(text(out).split("\f")[0]).toContain("Total 2026");
+});
+
+test("a paragraph reflows, and the engine's own preview replaces the approximation", async ({ page }) => {
+  const w = await watch(page);
+  await open(page, "text-3.pdf");
+  await page.getByRole("button", { name: "Edit text" }).click();
+  // The body paragraph: two 12 pt lines from x = 72, baselines at 702 and 684.
+  const p = await at(page, 1, 0.2, (792 - 700) / 792);
+  await page.mouse.click(p.x, p.y);
+  const box = page.getByRole("textbox", { name: "Edit this paragraph" });
+  await expect(box).toHaveValue("The quick brown fox jumps over the lazy dog. Second line of body text.");
+  const longer =
+    "The quick brown fox jumps over the lazy dog. Second line of body text, now long enough to need a third and a fourth line once it is laid out again across the page width.";
+  await box.fill(longer);
+  await page.keyboard.press("Escape");
+  // First the browser's approximation, then the engine's rendering of the page.
+  await expect(page.locator(".ed-para-view")).toHaveCount(0, { timeout: 30_000 });
+  const out = await save(page);
+  // Reflowed inside the same column: more lines, same left edge.
+  const paras = JSON.parse(execFileSync("bun", ["e2e/paragraphs.ts", out]).toString()) as { text: string; lines: number; left: number; right: number }[];
+  const body = paras.find((q) => q.text.includes("now long enough"))!;
+  expect(body.text).toBe(longer);
+  expect(body.lines).toBeGreaterThanOrEqual(4);
+  expect(body.left).toBeCloseTo(72, 1);
+  expect(body.right).toBeLessThanOrEqual(313);
+  await w.assertClean();
+});
+
+test("the page's own image moves, then goes", async ({ page }) => {
+  // photo.pdf: a photo at (36, 36), 360 × 240 points, on a 432 × 312 page.
+  await open(page, "photo.pdf");
+  const from = await at(page, 1, 0.5, 0.5);
+  const to = await at(page, 1, 0.6, 0.4);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 4 });
+  await page.mouse.move(to.x, to.y, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator(".ed-object")).toHaveCount(1);
+  let out = await save(page);
+  await expect(page.locator(".ed-result")).toContainText("1 image or shape moved or removed");
+  expect(qdf(out)).toMatch(/q [\d.-]+ 0 0 [\d.-]+ [\d.-]+ [\d.-]+ cm\s*\n?\/Im0 Do/);
+  await page.keyboard.press("Delete");
+  out = await save(page);
+  // Page 2 keeps its own photo: one drawing of an image is left, not two.
+  expect(qdf(out).match(/\/Im0 Do/g)?.length).toBe(1);
 });
 
 test("text in any script, and a font asked for when none has the characters", async ({ page }) => {

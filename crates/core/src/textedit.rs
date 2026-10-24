@@ -125,6 +125,78 @@ pub fn runs_of(page: &Page, index: usize) -> Vec<TextRun> {
         .collect()
 }
 
+/// An image, drawing or shape of a page that the editor can move or delete.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PageObject {
+    pub page: usize,
+    /// "image", "form" or "path", with its index in that list.
+    pub kind: &'static str,
+    pub index: usize,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+/// The page's images, drawings and shapes worth handling one by one: not
+/// clipping paths, specks or backgrounds covering most of the page.
+pub fn objects_of(page: &Page, index: usize) -> Vec<PageObject> {
+    let page_area = page.width * page.height;
+    let keep = |b: &[f32; 4]| {
+        let (w, h) = (b[2] - b[0], b[3] - b[1]);
+        w.is_finite() && h.is_finite() && (w >= 2.0 || h >= 2.0) && w * h < page_area * 0.8
+    };
+    let mut out = vec![];
+    for (i, im) in page.images.iter().enumerate() {
+        if keep(&im.bbox) {
+            out.push(PageObject {
+                page: index,
+                kind: "image",
+                index: i,
+                x: im.bbox[0],
+                y: im.bbox[1],
+                w: im.bbox[2] - im.bbox[0],
+                h: im.bbox[3] - im.bbox[1],
+            });
+        }
+    }
+    // A form drawing text is part of the text; one holding only art is an object.
+    for (i, f) in page.forms.iter().enumerate() {
+        let has_text = f
+            .child
+            .is_some_and(|c| page.glyphs.iter().any(|g| g.stream == c));
+        if f.child.is_some() && !has_text && keep(&f.bbox) {
+            out.push(PageObject {
+                page: index,
+                kind: "form",
+                index: i,
+                x: f.bbox[0],
+                y: f.bbox[1],
+                w: f.bbox[2] - f.bbox[0],
+                h: f.bbox[3] - f.bbox[1],
+            });
+        }
+    }
+    for (i, p) in page.paths.iter().enumerate() {
+        if !p.clip && keep(&p.bbox) {
+            out.push(PageObject {
+                page: index,
+                kind: "path",
+                index: i,
+                x: p.bbox[0],
+                y: p.bbox[1],
+                w: p.bbox[2] - p.bbox[0],
+                h: p.bbox[3] - p.bbox[1],
+            });
+        }
+        if out.len() >= 2000 {
+            break;
+        }
+    }
+    out
+}
+
 /// Lines of existing text on the given pages (0-based).
 pub fn text_runs(doc: &Document, pages: &[usize]) -> Vec<TextRun> {
     let ids = pdf::page_ids(doc);
