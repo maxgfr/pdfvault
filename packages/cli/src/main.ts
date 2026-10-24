@@ -258,7 +258,7 @@ Exit codes: 0 success, 1 a file failed, 2 usage error.`;
     images: "<image> [image...]",
     mixed: "<pdf|image> [pdf|image...]",
     "pdf+image": "<pdf> <image>",
-    "pdf+images": "<pdf> [image...]",
+    "pdf+images": "<pdf> [image or font file...]",
     "pdf+pdf": "<pdf> <pdf>",
   };
   return `pdfvault ${tool.id} ${inputs[tool.input]} [options]

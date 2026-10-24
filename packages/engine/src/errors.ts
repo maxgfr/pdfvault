@@ -7,6 +7,7 @@ export type ErrorCode =
   | "invalid_option"
   | "unsupported"
   | "image"
+  | "missing_glyphs"
   | "ocr"
   | "ocr_model"
   | "ocr_not_ready"

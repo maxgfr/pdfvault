@@ -19,7 +19,15 @@ thiserror = "2"
 crc32fast = "1"
 color_quant = "1"
 getrandom = { version = "0.4", features = ["wasm_js"] }
+hayro-cmap = { version = "0.1", default-features = false }
+harfrust = { version = "0.15", optional = true }
+skrifa = { version = "0.49", default-features = false, features = ["std"], optional = true }
+subsetter = { version = "0.2", default-features = false, optional = true }
+unicode-bidi = { version = "0.3", optional = true }
 
 
 [features]
 fixtures = []
+# Writing text in any script (shaping, font subsetting) for the editor.
+# The wasm module turns it on; without it, edits that write text fail.
+typeset = ["dep:harfrust", "dep:skrifa", "dep:subsetter", "dep:unicode-bidi"]

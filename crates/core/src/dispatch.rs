@@ -89,6 +89,8 @@ pub const OPS: &[&str] = &[
     "header-footer",
     "stamp",
     "edit",
+    "edit-plan",
+    "text-runs",
     "arrange",
     "form-fields",
     "meta-read",
@@ -193,6 +195,24 @@ pub fn run(op: &str, inputs: Vec<Vec<u8>>, options: &str) -> Result<Output> {
             Output {
                 files: vec![file("edited", "pdf", bytes)],
                 report: serde_json::to_value(report)?,
+            }
+        }
+        "edit-plan" => {
+            let doc = inputs
+                .first()
+                .ok_or_else(|| Error::option("edit-plan needs the PDF"))?;
+            Output {
+                files: vec![],
+                report: serde_json::to_value(edit::plan(doc, &parse(&options)?)?)?,
+            }
+        }
+        "text-runs" => {
+            let doc = pdf::load(&one(&inputs, op)?, pw)?;
+            let count = pdf::page_ids(&doc).len();
+            let pages = pdf::parse_ranges(&c.page_spec().unwrap_or_default(), count)?;
+            Output {
+                files: vec![],
+                report: json!({ "runs": textedit::text_runs(&doc, &pages) }),
             }
         }
         "arrange" => pdf(

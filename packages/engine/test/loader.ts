@@ -6,6 +6,7 @@ const root = new URL("../../../", import.meta.url).pathname;
 export const bunLoader: Loader = {
   wasm: async (name) => Bun.file(`${root}packages/engine/wasm/${name}/${name}_bg.wasm`).arrayBuffer(),
   model: async (name) => new Uint8Array(await Bun.file(`${root}models/${name}`).arrayBuffer()),
+  font: async (name) => new Uint8Array(await Bun.file(`${root}models/fonts/${name}`).arrayBuffer()),
 };
 
 export const engine = new Engine(bunLoader);

@@ -95,7 +95,7 @@ pub fn png(img: &image::DynamicImage) -> Vec<u8> {
 pub struct Builder {
     pub doc: Document,
     pages_id: ObjectId,
-    font_id: ObjectId,
+    pub font_id: ObjectId,
     kids: Vec<Object>,
     outlines: Option<ObjectId>,
     catalog_extra: Vec<(String, Object)>,
@@ -397,6 +397,35 @@ pub fn any_stream_contains(pdf_bytes: &[u8], needle: &[u8]) -> bool {
                 .unwrap_or_else(|_| s.content.clone());
             data.windows(needle.len()).any(|w| w == needle)
         })
+}
+
+/// A font the engine ships (models/fonts, from `bun run fetch-models`), such
+/// as "LiberationSans-Regular.ttf".
+pub fn bundled_font(name: &str) -> Vec<u8> {
+    let dir = std::env::var("PDFVAULT_MODELS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../models")
+        });
+    std::fs::read(dir.join("fonts").join(name))
+        .unwrap_or_else(|_| panic!("{name} missing: run `bun run fetch-models` first"))
+}
+
+/// Make `doc` a one-page, US Letter document drawing `content` with `resources`.
+pub fn single_page(doc: &mut Document, content: ObjectId, resources: Dictionary) -> ObjectId {
+    let pages = doc.new_object_id();
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Contents" => content, "Resources" => resources,
+    });
+    doc.objects.insert(
+        pages,
+        dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }.into(),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", catalog);
+    page
 }
 
 /// Bytes that start like a PDF and then fall apart.
