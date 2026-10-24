@@ -92,6 +92,6 @@ export async function zipFiles(files: { name: string; bytes: Uint8Array }[]): Pr
 }
 
 /** Report-only core calls (document info before a run, metadata prefill, form fields). */
-export async function coreReport<T>(op: "info" | "meta-read" | "form-fields", input: Uint8Array, options: Record<string, string | undefined> = {}): Promise<T> {
+export async function coreReport<T>(op: "info" | "meta-read" | "form-fields" | "text-runs", input: Uint8Array, options: Record<string, string | undefined> = {}): Promise<T> {
   return (await runJob(`core:${op}`, [input], options, [], () => {})).report as T;
 }

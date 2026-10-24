@@ -42,7 +42,7 @@ Each command's `--help` is authoritative. The common ones: `merge a.pdf b.pdf -o
 
 ## Edit a PDF
 
-`edit in.pdf [image...] --ops @edits.json` applies one JSON document (inline JSON works too). Coordinates are points in the page as displayed, origin at the bottom-left; `page` is 0-based and counts the input's pages, then the `blanks` it appends. Images given after the PDF are `"image": 0`, `1`…
+`edit in.pdf [image or font file...] --ops @edits.json` applies one JSON document (inline JSON works too). Coordinates are points in the page as displayed, origin at the bottom-left; `page` is 0-based and counts the input's pages, then the `blanks` it appends. Files given after the PDF are attachments `0`, `1`…: images (`"image": 0`) or TrueType/OpenType fonts (`"fontFile": { "file": 1 }`).
 
 ```json
 {
@@ -51,6 +51,7 @@ Each command's `--help` is authoritative. The common ones: `merge a.pdf b.pdf -o
   "blanks": [{ "size": "a4" }],
   "items": [
     { "type": "text", "page": 0, "x": 72, "y": 720, "text": "Approved\nby Ada", "size": 14, "color": "#111111", "bold": true },
+    { "type": "replace", "page": 0, "find": "Invoice 2025-01", "text": "Invoice 2025-02" },
     { "type": "rect", "page": 0, "x": 70, "y": 600, "w": 200, "h": 20, "fill": "#ffffff" },
     { "type": "image", "page": 1, "x": 360, "y": 72, "w": 160, "h": 60, "image": 0 },
     { "type": "ink", "page": 1, "paths": [[100, 100, 140, 120, 180, 100]], "color": "#1a2b6d", "lineWidth": 2 },
@@ -62,9 +63,10 @@ Each command's `--help` is authoritative. The common ones: `merge a.pdf b.pdf -o
 }
 ```
 
-- Text items: `x`, `y` is the top-left of the text box; Helvetica, Latin-1 only. A white `rect` is a whiteout; existing text cannot be retyped, only covered.
+- Text items: `x`, `y` is the top-left of the text box. Any script: `font` is `sans` (default), `serif` or `mono` (Liberation, like Arial, Times, Courier), with `bold` and `italic`, or `fontFile` for an attached font. Characters no font has fail with `missing_glyphs`: attach a font that has them, as `fontFile` or in `"fallbackFonts": [{ "file": 1 }]`.
+- `replace` changes existing text: the glyphs whose centre is in the box go, and `text` is written on their baseline, in their font when it has every character (else the closest Liberation font). Size, colour and position default to the old text's; `font`, `bold`, `italic`, `size`, `color`, `start`, `baseline` override. An empty `text` deletes the line. `find` instead of a box rewrites the first line of the page that contains it, with `find` replaced by `text` (the easy way: no coordinates).
 - `highlight` and `note` become real annotations; everything else is drawn into the page.
-- `redact` rasterizes each page it touches: the text there is gone for good, and so is the rest of that page's text. Run `ocr` afterwards if it must stay searchable.
+- `redact` deletes what is under the box (glyphs, image pixels, shapes inside it, annotations and fields over it) and keeps the rest of the page as it was, text included; a page that cannot be redacted with certainty becomes an image. `"redaction": "flatten"` turns every redacted page into an image.
 - Field names come from the form; filling an unknown name fails. `order` drops, repeats and turns pages (`rotate` in degrees clockwise).
 
 ## Limits

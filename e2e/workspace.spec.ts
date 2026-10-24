@@ -84,6 +84,26 @@ test("every registry tool is reachable from a selection", async ({ page }) => {
   await expect(page.locator(".ws-more").getByRole("button", { name: "Compare PDFs" })).toBeVisible();
 });
 
+test("viewing and editing are cards of their own", async ({ page }) => {
+  await page.goto("./");
+  await expect(page.getByRole("link", { name: /^View PDF/ })).toHaveAttribute("href", "#/view");
+  await expect(page.getByRole("link", { name: /^Edit PDF/ })).toHaveCount(1);
+});
+
+test("a dropped PDF opens in the viewer, then the editor", async ({ page }) => {
+  await page.goto("./");
+  await drop(page, ["text-3.pdf"]);
+  await expect(card(page, "text-3.pdf")).toContainText("3 pages", { timeout: 60_000 });
+  await card(page, "text-3.pdf").getByRole("button", { name: "View text-3.pdf" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "PDF viewer" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Page 3" })).toBeVisible({ timeout: 60_000 });
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Pages" }).getByRole("img", { name: "Page 1" })).toBeVisible({ timeout: 60_000 });
+  await page.getByRole("link", { name: "Your files" }).first().click();
+  // Still one file: the viewer handed the same one to the editor.
+  await expect(page.locator(".ws-file")).toHaveCount(1);
+});
+
 test("pasting a screenshot adds it", async ({ page }) => {
   await page.goto("./");
   const png = (await readFile(fixture("signature.png"))).toString("base64");

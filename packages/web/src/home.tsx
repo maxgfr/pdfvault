@@ -4,6 +4,16 @@ import { Icon } from "./icons.tsx";
 import { FileDrop, Workspace, addFiles } from "./workspace-page.tsx";
 import { filesFromDrop, useWorkspace } from "./workspace.ts";
 
+const FEATURED = [
+  { href: "#/view", title: "View PDF", summary: "Read a PDF page by page and zoom in, then edit it if needed.", words: "viewer read open preview" },
+  {
+    href: "#/edit",
+    title: "Edit PDF",
+    summary: "Change the text, sign, add images and comments, fill forms, redact, reorder pages.",
+    words: "edit editor annotate sign fill redact text",
+  },
+];
+
 export function Home() {
   const [q, setQ] = useState("");
   const [over, setOver] = useState(false);
@@ -11,7 +21,11 @@ export function Home() {
   const needle = q.trim().toLowerCase();
   const match = (t: (typeof tools)[number]) =>
     !needle || `${t.title} ${t.summary} ${t.id} ${(t.aliases ?? []).join(" ")}`.toLowerCase().includes(needle);
-  const groups = categories.map((c) => ({ ...c, items: tools.filter((t) => t.category === c.id && match(t)) })).filter((g) => g.items.length);
+  // Reading and editing come first; the editor's registry entry is shown there, not twice.
+  const featured = FEATURED.filter((f) => !needle || `${f.title} ${f.summary} ${f.words}`.toLowerCase().includes(needle));
+  const groups = categories
+    .map((c) => ({ ...c, items: tools.filter((t) => t.category === c.id && t.id !== "edit" && match(t)) }))
+    .filter((g) => g.items.length);
 
   useEffect(() => {
     // Pasting files or a screenshot anywhere outside a text field adds them.
@@ -31,8 +45,25 @@ export function Home() {
     <section className="catalog" aria-label="Tools">
       <div className="search">
         <Icon name="search" />
-        <input type="search" placeholder={`Search ${tools.length} tools`} value={q} onChange={(e) => setQ(e.currentTarget.value)} aria-label="Search tools" />
+        <input type="search" placeholder={`Search ${tools.length + 1} tools`} value={q} onChange={(e) => setQ(e.currentTarget.value)} aria-label="Search tools" />
       </div>
+      {featured.length ? (
+        <div className="group">
+          <h2>
+            <Icon name="view" /> Read and edit
+          </h2>
+          <ul className="cards">
+            {featured.map((f) => (
+              <li key={f.href}>
+                <a href={f.href} className="card">
+                  <strong>{f.title}</strong>
+                  <span>{f.summary}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {groups.map((g) => (
         <div key={g.id} className="group">
           <h2>
@@ -50,7 +81,7 @@ export function Home() {
           </ul>
         </div>
       ))}
-      {groups.length === 0 ? <p className="note">No tool matches “{q}”.</p> : null}
+      {groups.length === 0 && featured.length === 0 ? <p className="note">No tool matches “{q}”.</p> : null}
     </section>
   );
 
@@ -102,7 +133,7 @@ export function Home() {
       {files.length ? (
         // With files open, the tool list stays out of the way.
         <details className="catalog-fold">
-          <summary>Or open a tool on its own page ({tools.length})</summary>
+          <summary>Or open a tool on its own page ({tools.length + 1})</summary>
           {catalog}
         </details>
       ) : (

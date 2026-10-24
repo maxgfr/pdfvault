@@ -26,6 +26,7 @@ const PATHS: Record<string, string> = {
   upload: "M12 16V4M7 9l5-5 5 5M5 20h14",
   cursor: "M5 3l14 7-6 2-2 6z",
   text: "M5 6V4h14v2M12 4v16M9 20h6",
+  edittext: "M4 7V5h10v2M9 5v12M7 17h4M13 20v-2.5l6-6 2.5 2.5-6 6z",
   square: "M4 5h16v14H4z",
   whiteout: "M4 5h16v14H4zM8 9h8M8 13h5",
   highlight: "M9 15l-4 4h6l2-2M8 13l7-7 3 3-7 7zM4 21h16",

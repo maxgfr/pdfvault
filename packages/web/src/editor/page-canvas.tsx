@@ -1,11 +1,14 @@
-import { NOTE_SIZE, TEXT_ASCENT, TEXT_LINE, type FormField } from "@pdfvault/engine";
+import { NOTE_SIZE, TEXT_ASCENT, TEXT_LINE, type FormField, type TextRun } from "@pdfvault/engine";
 import { useRef, type PointerEvent as ReactPointerEvent } from "react";
-import { bounds, moveItem, newId, type Doc, type Item, type PageRef, type SrcPage, type StampImage, type ToolName } from "./model.ts";
+import { ensurePreviewFont, previewFamily, sampleBackground, type Family } from "./fonts.ts";
+import { bounds, moveItem, newId, styleOf, type Doc, type Item, type PageRef, type SrcPage, type StampImage, type ToolName } from "./model.ts";
 
 export interface Style {
   color: string;
   size: number;
   bold: boolean;
+  italic: boolean;
+  family: Family;
   lineWidth: number;
 }
 
@@ -16,6 +19,8 @@ interface Props {
   scale: number;
   items: Item[];
   fields: FormField[];
+  /** Lines of the page's own text (this source page). */
+  runs: TextRun[];
   values: Record<string, string | boolean>;
   tool: ToolName;
   style: Style;
@@ -46,9 +51,12 @@ type Drag =
 
 const BOX_TOOLS: ToolName[] = ["whiteout", "rect", "highlight", "redact"];
 const isWhiteout = (it: Item) => it.type === "rect" && it.fill === "#ffffff" && !it.stroke;
+const typed = (it: Item | undefined) => it?.type === "text" || it?.type === "replace";
 
 export function PageCanvas(p: Props) {
   const svg = useRef<SVGSVGElement>(null);
+  const img = useRef<HTMLImageElement>(null);
+  const lastDown = useRef<{ id: string; at: number } | null>(null);
   const drag = useRef<Drag | null>(null);
   const { width: W, height: H } = p.src;
   const turned = p.page.rotate % 180 !== 0;
@@ -72,7 +80,26 @@ export function PageCanvas(p: Props) {
     const src = p.page.src;
     const capture = () => svg.current?.setPointerCapture(e.pointerId);
 
-    if (p.tool === "select" || (p.tool === "text" && hit && p.items.find((i) => i.id === hit)?.type === "text")) {
+    const run = target.closest("[data-run]")?.getAttribute("data-run");
+    if (p.tool === "edittext" && !hit && run !== null && run !== undefined) {
+      // A line of the page's text becomes an editable copy of itself.
+      e.preventDefault();
+      const r = p.runs[Number(run)]!;
+      const id = newId();
+      const bg = sampleBackground(img.current, W, H, [r.x, r.y, r.x + r.w, r.y + r.h]);
+      const look = { family: r.family, bold: r.bold, italic: r.italic, bg, fontName: r.fontName, original: r.text, size: r.size, color: r.color };
+      p.commit((d) => ({
+        ...d,
+        items: [
+          ...d.items,
+          { id, type: "replace", page: src, x: r.x, y: r.y, w: r.w, h: r.h, text: r.text, start: r.start, baseline: r.baseline, size: r.size, color: r.color, font: "auto", hscale: r.hscale, look, run: Number(run) },
+        ],
+      }));
+      p.onSelect(id);
+      p.onEdit(id);
+      return;
+    }
+    if (p.tool === "select" || ((p.tool === "text" || p.tool === "edittext") && hit && typed(p.items.find((i) => i.id === hit)))) {
       if (handle) {
         const origin = p.items.find((i) => i.id === handle)!;
         p.checkpoint();
@@ -81,6 +108,15 @@ export function PageCanvas(p: Props) {
       } else if (hit) {
         const origin = p.items.find((i) => i.id === hit)!;
         p.onSelect(hit);
+        // A second press on the same text opens it for typing (pointer capture swallows dblclick).
+        const again = lastDown.current?.id === hit && e.timeStamp - lastDown.current.at < 450;
+        lastDown.current = { id: hit, at: e.timeStamp };
+        if ((p.tool === "edittext" && origin.type === "replace") || (again && (typed(origin) || origin.type === "note"))) {
+          // Keep the focus on the box about to open.
+          e.preventDefault();
+          p.onEdit(hit);
+          return;
+        }
         drag.current = { kind: "move", id: hit, from: pt, origin, moved: false };
         capture();
       } else {
@@ -92,8 +128,12 @@ export function PageCanvas(p: Props) {
     e.preventDefault();
     const id = newId();
     const s = p.style;
+    if (p.tool === "edittext") return;
     if (p.tool === "text") {
-      p.commit((d) => ({ ...d, items: [...d.items, { id, type: "text", page: src, x: pt.x, y: pt.y + s.size * 0.5, text: "", size: s.size, color: s.color, bold: s.bold }] }));
+      p.commit((d) => ({
+        ...d,
+        items: [...d.items, { id, type: "text", page: src, x: pt.x, y: pt.y + s.size * 0.5, text: "", size: s.size, color: s.color, bold: s.bold, italic: s.italic, font: s.family }],
+      }));
       p.onSelect(id);
       p.onEdit(id);
       p.onPlaced();
@@ -163,10 +203,11 @@ export function PageCanvas(p: Props) {
     } else if (g.kind === "resize") {
       const o = g.origin;
       const [x0, , , y1] = bounds(o);
-      if (o.type === "text") {
+      if (o.type === "text" || o.type === "replace") {
         const [bx0, , bx1] = bounds(o);
         const k = Math.max(0.2, (pt.x - bx0) / Math.max(1, bx1 - bx0));
-        p.live(replace(g.id, (it) => (it.type === "text" ? { ...it, size: Math.min(300, Math.max(4, Math.round((o.size ?? 14) * k))) } : it)));
+        const size = Math.min(300, Math.max(4, Math.round((o.size ?? 14) * k)));
+        p.live(replace(g.id, (it) => (it.type === "text" || it.type === "replace" ? { ...it, size } : it)));
       } else if ("w" in o) {
         const w = Math.max(4, pt.x - x0);
         const h = o.type === "image" ? (w * o.h) / o.w : Math.max(4, y1 - pt.y);
@@ -195,11 +236,12 @@ export function PageCanvas(p: Props) {
 
   const editingItem = p.items.find((i) => i.id === p.editing);
   const pageVars = { pw: W * p.scale, ph: H * p.scale, rot: p.page.rotate, scale: p.scale };
+  const rewritten = new Set(p.items.flatMap((it) => (it.type === "replace" && it.run !== undefined ? [it.run] : [])));
 
   return (
     <div className="ed-slot" data-turned={turned} ref={(el) => setVars(el, pageVars)} data-page={p.index + 1}>
       <div className="ed-page" ref={(el) => setVars(el, pageVars)}>
-        {p.src.url ? <img src={p.src.url} alt="" draggable={false} /> : <div className="ed-blank" />}
+        {p.src.url ? <img ref={img} src={p.src.url} alt="" draggable={false} /> : <div className="ed-blank" />}
         <svg
           ref={svg}
           className="ed-svg"
@@ -215,10 +257,20 @@ export function PageCanvas(p: Props) {
           onDoubleClick={(e) => {
             const hit = (e.target as Element).closest("[data-id]")?.getAttribute("data-id");
             const it = p.items.find((i) => i.id === hit);
-            if (it && (it.type === "text" || it.type === "note")) p.onEdit(it.id);
+            if (it && (it.type === "text" || it.type === "note" || it.type === "replace")) p.onEdit(it.id);
           }}
         >
-          {p.items.map((it) => (
+          {p.tool === "edittext"
+            ? p.runs.map((r, i) =>
+                r.editable && !rewritten.has(i) ? (
+                  <rect key={i} className="ed-run" data-run={i} x={r.x - 1} y={H - r.y - r.h - 1} width={r.w + 2} height={r.h + 2}>
+                    <title>{r.text}</title>
+                  </rect>
+                ) : null,
+              )
+            : null}
+          {/* Rewritten lines belong to the page itself: everything added goes on top of them. */}
+          {[...p.items.filter((it) => it.type === "replace"), ...p.items.filter((it) => it.type !== "replace")].map((it) => (
             <ItemShape key={it.id} it={it} H={H} images={p.images} selected={it.id === p.selected} editing={it.id === p.editing} />
           ))}
           {p.items
@@ -238,7 +290,7 @@ export function PageCanvas(p: Props) {
         {p.fields.map((f, i) => (
           <FieldOverlay key={`${f.name}-${i}`} f={f} H={H} W={W} scale={p.scale} pageId={p.page.id} values={p.values} commit={p.commit} live={p.live} checkpoint={p.checkpoint} />
         ))}
-        {editingItem && (editingItem.type === "text" || editingItem.type === "note") ? (
+        {editingItem && (editingItem.type === "text" || editingItem.type === "note" || editingItem.type === "replace") ? (
           <TextEditor key={editingItem.id} it={editingItem} W={W} H={H} scale={p.scale} live={p.live} commit={p.commit} onDone={() => p.onEdit(null)} />
         ) : null}
       </div>
@@ -253,16 +305,63 @@ function ItemShape({ it, H, images, selected, editing }: { it: Item; H: number; 
       if (editing) return null;
       const size = it.size ?? 14;
       const [x0, y0, x1, y1] = bounds(it);
+      const st = styleOf(it);
+      ensurePreviewFont(st.family, st.bold, st.italic);
       return (
         <g {...common}>
           <rect className="ed-hit" x={x0} y={H - y1} width={x1 - x0} height={y1 - y0} />
-          <text x={it.x} y={H - it.y + size * TEXT_ASCENT} fontSize={size} fontWeight={it.bold ? 700 : 400} fill={it.color ?? "#000000"} xmlSpace="preserve">
+          <text
+            x={it.x}
+            y={H - it.y + size * TEXT_ASCENT}
+            fontSize={size}
+            fontFamily={previewFamily(st.family)}
+            fontWeight={st.bold ? 700 : 400}
+            fontStyle={st.italic ? "italic" : "normal"}
+            fill={it.color ?? "#000000"}
+            xmlSpace="preserve"
+          >
             {it.text.split("\n").map((line, i) => (
               <tspan key={i} x={it.x} dy={i === 0 ? 0 : size * TEXT_LINE}>
                 {line || " "}
               </tspan>
             ))}
           </text>
+        </g>
+      );
+    }
+    case "replace": {
+      const size = it.size ?? it.h;
+      const st = styleOf(it);
+      ensurePreviewFont(st.family, st.bold, st.italic);
+      const start = it.start ?? it.x;
+      const base = it.baseline ?? it.y;
+      const [x0, y0, x1, y1] = bounds(it);
+      // The old line hidden behind the page's own colour, the new one on top.
+      const pad = Math.max(0.5, size * 0.06);
+      const k = (it.hscale ?? 100) / 100;
+      return (
+        <g {...common}>
+          <rect className="ed-hit" x={x0} y={H - y1} width={x1 - x0} height={y1 - y0} />
+          <rect className="ed-mask" x={it.x - pad} y={H - it.y - it.h - pad} width={it.w + 2 * pad} height={it.h + 2 * pad} fill={it.look?.bg ?? "#ffffff"} />
+          {editing ? null : (
+            <text
+              x={start}
+              y={H - base}
+              fontSize={size}
+              fontFamily={previewFamily(st.family)}
+              fontWeight={st.bold ? 700 : 400}
+              fontStyle={st.italic ? "italic" : "normal"}
+              fill={it.color ?? "#000000"}
+              transform={k !== 1 ? `translate(${start} 0) scale(${k} 1) translate(${-start} 0)` : undefined}
+              xmlSpace="preserve"
+            >
+              {it.text.split("\n").map((line, i) => (
+                <tspan key={i} x={start} dy={i === 0 ? 0 : size * TEXT_LINE}>
+                  {line || " "}
+                </tspan>
+              ))}
+            </text>
+          )}
         </g>
       );
     }
@@ -332,7 +431,7 @@ function TextEditor({
   commit,
   onDone,
 }: {
-  it: Item & { type: "text" | "note" };
+  it: Item & { type: "text" | "note" | "replace" };
   W: number;
   H: number;
   scale: number;
@@ -341,25 +440,37 @@ function TextEditor({
   onDone: () => void;
 }) {
   const note = it.type === "note";
-  const size = it.type === "text" ? (it.size ?? 14) : 12;
+  const size = it.type === "text" ? (it.size ?? 14) : it.type === "replace" ? (it.size ?? it.h) : 12;
+  const st = styleOf(it);
+  // A rewritten line starts on its baseline; the box's top is one ascent above.
+  const left = it.type === "replace" ? (it.start ?? it.x) : note ? it.x + NOTE_SIZE + 4 : it.x;
+  const top = it.type === "replace" ? (it.baseline ?? it.y) + size * TEXT_ASCENT : it.y;
   const finish = (text: string) => {
-    if (!text.trim()) commit((d) => ({ ...d, items: d.items.filter((x) => x.id !== it.id) }));
+    const look = it.look;
+    // An empty replacement deletes the line; an untouched one is no edit at all.
+    const untouched =
+      it.type === "replace" && look && text === look.original && it.size === look.size && it.color === look.color && it.bold === undefined && it.italic === undefined && it.font === "auto";
+    if ((it.type !== "replace" && !text.trim()) || untouched) commit((d) => ({ ...d, items: d.items.filter((x) => x.id !== it.id) }));
     onDone();
   };
   return (
     <textarea
       className={note ? "ed-text-editor ed-note-editor" : "ed-text-editor"}
-      data-bold={it.type === "text" && it.bold ? "true" : undefined}
-      aria-label={note ? "Comment" : "Text"}
-      placeholder={note ? "Write a comment…" : "Type here"}
+      data-bold={!note && st.bold ? "true" : undefined}
+      data-italic={!note && st.italic ? "true" : undefined}
+      data-rewrite={it.type === "replace" ? "true" : undefined}
+      aria-label={note ? "Comment" : it.type === "replace" ? "Edit this line" : "Text"}
+      placeholder={note ? "Write a comment…" : it.type === "replace" ? "Empty: the line is removed" : "Type here"}
       value={it.text}
       // The box sits where the text will be drawn, at the page's scale.
       ref={(el) => {
         setVars(el, {
-          left: `${((note ? it.x + NOTE_SIZE + 4 : it.x) / W) * 100}%`,
-          top: `${((H - it.y) / H) * 100}%`,
+          left: `${(left / W) * 100}%`,
+          top: `${((H - top) / H) * 100}%`,
           fs: `${size * scale}px`,
-          color: it.type === "text" ? (it.color ?? "#000000") : "#16181d",
+          color: note ? "#16181d" : (it.color ?? "#000000"),
+          ff: previewFamily(st.family),
+          bg: it.look?.bg ?? "#ffffff",
         });
         if (el && document.activeElement !== el && !el.dataset.focused) {
           el.dataset.focused = "1";
@@ -369,7 +480,7 @@ function TextEditor({
       rows={Math.max(1, it.text.split("\n").length)}
       onChange={(e) => {
         const text = e.currentTarget.value;
-        live((d) => ({ ...d, items: d.items.map((x) => (x.id === it.id && (x.type === "text" || x.type === "note") ? { ...x, text } : x)) }));
+        live((d) => ({ ...d, items: d.items.map((x) => (x.id === it.id && (x.type === "text" || x.type === "note" || x.type === "replace") ? { ...x, text } : x)) }));
       }}
       onKeyDown={(e) => {
         if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey))) {

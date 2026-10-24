@@ -1,5 +1,5 @@
 // Build the site into dist/: bundle the app, the worker and the service
-// worker, copy the wasm modules and models, and write the offline manifest.
+// worker, copy the wasm modules, models and fonts, and write the offline manifest.
 // `--serve` then serves dist/ under /pdfvault/ like GitHub Pages does.
 import { createHash } from "node:crypto";
 import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
@@ -58,6 +58,12 @@ for (const name of ["core", "render", "ocr"]) {
 }
 await mkdir(`${dist}/models`, { recursive: true });
 for (const m of ["text-detection.rten", "text-recognition.rten"]) await cp(`${root}models/${m}`, `${dist}/models/${m}`);
+// The fonts the editor writes and previews text with (SIL OFL 1.1, licence alongside).
+await mkdir(`${dist}/fonts`, { recursive: true });
+for (const f of await readdir(`${root}models/fonts`)) {
+  if (f.endsWith(".ttf")) await cp(`${root}models/fonts/${f}`, `${dist}/fonts/${f}`);
+}
+await cp(`${root}models/fonts/LICENSE`, `${dist}/fonts/LICENSE.txt`);
 await Bun.write(`${dist}/.nojekyll`, "");
 
 async function* walk(dir: string): AsyncGenerator<string> {
@@ -77,7 +83,7 @@ for await (const p of walk(dist)) {
   hash.update(rel).update(new Uint8Array(await Bun.file(p).arrayBuffer()));
 }
 files.sort();
-const lazy = files.filter((f) => f.startsWith("models/") || f === "wasm/render.wasm" || f === "wasm/ocr.wasm");
+const lazy = files.filter((f) => f.startsWith("models/") || f.startsWith("fonts/") || f === "wasm/render.wasm" || f === "wasm/ocr.wasm");
 const precache = ["./", ...files.filter((f) => f !== "index.html" && !lazy.includes(f))];
 const manifest = { version: hash.digest("hex").slice(0, 16), precache, lazy };
 
