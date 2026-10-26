@@ -40,9 +40,14 @@ export function FileDrop() {
         <strong>Drop PDFs, photos or any file here</strong>
         <span>Several at once, or a whole folder. You can also paste a screenshot.</span>
       </p>
-      <button type="button" className="primary" onClick={() => input.current?.click()} aria-describedby={id}>
-        Choose files
-      </button>
+      <div className="hero-drop-buttons">
+        <button type="button" className="primary" onClick={() => input.current?.click()} aria-describedby={id}>
+          Choose files
+        </button>
+        <a href="#/scan" className="button secondary">
+          <Icon name="camera" /> Scan paper
+        </a>
+      </div>
       <input
         ref={input}
         id={id}

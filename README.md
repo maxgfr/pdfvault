@@ -20,6 +20,8 @@ Online PDF tools ask you to upload contracts, payslips and scans to someone else
 
 Start from your files, not from a tool. Drop several PDFs, photos or a whole folder on the home page (or paste a screenshot): the page lists them with a preview (click it to read the PDF page by page) and offers what fits the selection. Compress works on a mix (each file gets the right tool), photos and PDFs combine into one PDF in the order shown, and every tool that accepts the selection is one click away. A result can replace its original in the list, so you can compress, then protect, then download, without saving anything in between. Formats the browser cannot read (HEIC, Office documents) are named with what to do instead.
 
+**Scan** turns a phone into a document scanner. Open the site (or the installed app: a long press on its icon offers *Scan a document*) and photograph each page. The sheet is found in the photo and straightened. Uneven light and shadows are evened out, so the paper comes out white, in color, grayscale or crisp black and white. Drag the four corners when the detection misses (a loupe shows the paper's edge under your finger), reorder or turn pages, add OCR if the text should be searchable, then share the PDF straight to Mail, Messages or Drive. On Android, photos shared from the gallery to pdfvault land in the scanner. Frames are read from the camera stream in the tab: nothing is recorded or sent.
+
 The editor opens a PDF page by page. **Edit text**: click a paragraph of the document and change it; its old glyphs are taken out of the page and the new text reflows inside the paragraph's column (left, right, centred or justified, as it was), each character keeping the font, weight, size and colour of the one it replaces, so a bold word stays bold. Once you stop typing, the engine redraws the page with your changes: the preview is the saved result, not an approximation. **Select** also takes the page's own images and shapes: move them, resize them, delete them. A PDF usually embeds only the characters it uses: when a new character is missing (a digit in a date or an amount), the line is redrawn with the complete font installed on your device (the browser asks once for access to local fonts; the CLI looks in the system font folders), or else only that character takes the closest Liberation font (metric-compatible with Arial, Times New Roman and Courier New). Add text in any script (shaped with HarfRust, right-to-left included; for scripts the bundled fonts lack, the editor uses a font from your device or one you pick). Whiteout, boxes, freehand drawing, a drawn or imported signature, images, highlights and sticky notes (real annotations other PDF apps can edit), form filling, and reorder, rotate, duplicate, delete or insert pages from the page strip. **Redaction** removes what lies under each box from the file itself (glyphs, image pixels, shapes, annotations and form fields over it) and leaves the rest of the page as it was, text included; a second, independent reading of each redacted page (hayro) turns any page it doubts into an image. Undo and redo cover every step. Saving runs the same `edit` command the CLI has.
 
 <picture>
@@ -35,7 +37,7 @@ The editor opens a PDF page by page. **Edit text**: click a paragraph of the doc
 | Organize | Merge (one bookmark per file), combine PDFs and images into one PDF, split (ranges, every N pages, by bookmark), extract, delete, reorder, rotate, insert blank pages, N-up (2–16 pages per sheet) |
 | Edit | **Editor**: change existing text, add text in any script, whiteout, shapes, drawing, signature and images, highlights and notes as annotations, form filling, true redaction that keeps the rest of the page selectable, page strip. **Viewer**. Crop, text watermark, page numbers, header and footer, visual signature (image stamp), metadata (read, edit, wipe), flatten forms, repair, compare (pixel diff per page), info |
 | Security | Password protection with **AES-256** (PDF 2.0, revision 6), permissions, unlock |
-| Convert | Images → PDF (JPEGs embedded untouched, EXIF orientation honored), PDF → PNG/JPEG/WebP, **OCR → searchable PDF**, PDF → Markdown, text or EPUB (OCR on scanned pages) |
+| Convert | **Scan**: photos of paper → a straightened, cleaned-up PDF, Images → PDF (JPEGs embedded untouched, EXIF orientation honored), PDF → PNG/JPEG/WebP, **OCR → searchable PDF**, PDF → Markdown, text or EPUB (OCR on scanned pages) |
 | Images | Compress, resize, convert JPEG/PNG/WebP, strip EXIF/GPS/XMP without re-encoding, crop/rotate/flip, in batches |
 
 ### Compression levels
@@ -61,6 +63,7 @@ bunx pdfvault compress report.pdf --preset strong          # → report-compress
 bunx pdfvault compress "scans/*.pdf" -o small/ --json      # batch, machine-readable report
 bunx pdfvault merge a.pdf b.pdf -o all.pdf
 bunx pdfvault combine scan.pdf photo.jpg -o all.pdf             # PDFs and images, in order
+bunx pdfvault scan page1.jpg page2.jpg --filter bw --ocr -o letter.pdf   # photos of paper → clean PDF
 bunx pdfvault edit form.pdf sig.png --ops @edits.json            # the editor's JSON, see the skill
 bunx pdfvault split book.pdf --mode bookmarks -o chapters/
 bunx pdfvault encrypt contract.pdf --user-password '…'
@@ -144,7 +147,8 @@ Fuzzing: `cd fuzz && cargo +nightly fuzz run parse`.
 - A paragraph reflows inside itself, but nothing below it moves (a PDF has no flow): a paragraph made longer can run into the next one, and the editor says so. Text in vertical writing or at an angle is not offered. Bold or italic applies to a whole paragraph, not to a selection inside it.
 - When a changed line needs a character its embedded font lacks and the complete font is not installed (or, in the browser, Local Font Access is unavailable or refused), that character comes from Liberation Sans, Serif or Mono, close to but not the same as fonts other than Arial, Times and Courier.
 - Redaction turns a page into an image only when it cannot be sure (an image it cannot repaint, a font whose glyph positions are guessed); shapes crossing a box edge stay, hidden under it.
-- HEIC and AVIF photos and Office documents cannot be read; export them as JPEG or PDF first.
+- HEIC and AVIF photos and Office documents cannot be read; export them as JPEG or PDF first. (The scanner redraws a photo as JPEG when the browser can decode it, as Safari does HEIC.)
+- The scanner finds a sheet that is lighter than what it lies on; on a white table, drag the corners. Its camera photos have the stream's resolution (often 1080p or 4K), not the camera app's. Receiving photos from the share sheet works where browsers support Web Share Target (Android), not on iOS.
 - WebP output is lossless (no lossy WebP encoder in pure Rust).
 - No threads in wasm: GitHub Pages cannot send the COOP/COEP headers they need.
 

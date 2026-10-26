@@ -12,6 +12,12 @@ const FEATURED = [
     summary: "Change the text, sign, add images and comments, fill forms, redact, reorder pages.",
     words: "edit editor annotate sign fill redact text",
   },
+  {
+    href: "#/scan",
+    title: "Scan documents",
+    summary: "Photograph paper with your phone: the sheet is found, straightened and cleaned up into a PDF.",
+    words: "scan scanner camera photo phone document",
+  },
 ];
 
 export function Home() {
@@ -21,10 +27,10 @@ export function Home() {
   const needle = q.trim().toLowerCase();
   const match = (t: (typeof tools)[number]) =>
     !needle || `${t.title} ${t.summary} ${t.id} ${(t.aliases ?? []).join(" ")}`.toLowerCase().includes(needle);
-  // Reading and editing come first; the editor's registry entry is shown there, not twice.
+  // Reading, editing and scanning come first; their registry entries are shown there, not twice.
   const featured = FEATURED.filter((f) => !needle || `${f.title} ${f.summary} ${f.words}`.toLowerCase().includes(needle));
   const groups = categories
-    .map((c) => ({ ...c, items: tools.filter((t) => t.category === c.id && t.id !== "edit" && match(t)) }))
+    .map((c) => ({ ...c, items: tools.filter((t) => t.category === c.id && t.id !== "edit" && t.id !== "scan" && match(t)) }))
     .filter((g) => g.items.length);
 
   useEffect(() => {

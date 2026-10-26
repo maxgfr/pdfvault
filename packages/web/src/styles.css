@@ -2009,3 +2009,334 @@ button.ws-thumb:hover {
   border-radius: var(--radius-sm);
   color: var(--ink);
 }
+
+/* ---------------------------------------------------------------- scanner */
+
+.hero-drop-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+a.button {
+  text-decoration: none;
+}
+@media (pointer: coarse) {
+  /* On a phone the camera is the likelier start. */
+  .hero-drop-buttons a.button {
+    order: -1;
+    background: var(--accent);
+    border-color: transparent;
+    color: var(--accent-ink);
+  }
+  .hero-drop-buttons button.primary {
+    background: var(--surface);
+    border-color: var(--line-strong);
+    color: var(--ink);
+  }
+}
+
+.scan-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.scan-sub {
+  font-size: 1.05rem;
+  margin: 0 0 12px;
+}
+.scan-problems {
+  margin: 12px 0 0;
+  padding: 10px 14px 10px 30px;
+  background: var(--warn-soft);
+  border-radius: var(--radius-sm);
+  font-size: 0.92rem;
+}
+.scan-pages {
+  list-style: none;
+  margin: 18px 0 6px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(46%, 170px), 1fr));
+  gap: 14px;
+}
+.scan-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.scan-preview {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 3 / 4;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.scan-preview:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.scan-card[data-error="true"] .scan-preview {
+  border-color: var(--danger);
+}
+.scan-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  box-shadow: var(--shadow);
+  background: #fff;
+}
+.scan-wait {
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+.scan-num {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  min-width: 26px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+.scan-card-tools {
+  display: flex;
+  justify-content: space-between;
+}
+.scan-card-tools .icon {
+  width: 40px;
+  min-height: 40px;
+}
+.scan-looks {
+  border: 0;
+  margin: 0 0 16px;
+  padding: 0;
+  min-width: 0;
+}
+.scan-looks legend {
+  font-weight: 550;
+  font-size: 0.93rem;
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+/* Corner editor. */
+.crop {
+  display: grid;
+  gap: 12px;
+}
+.crop-stage {
+  position: relative;
+  justify-self: center;
+  max-width: 100%;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.crop-stage img {
+  display: block;
+  max-width: 100%;
+  max-height: min(68dvh, 760px);
+  border-radius: 4px;
+}
+.crop-stage svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.crop-shade {
+  fill: rgb(0 0 0 / 0.45);
+}
+.crop-edge {
+  fill: none;
+  stroke: var(--accent);
+}
+.crop-handle {
+  fill: rgb(255 255 255 / 0.25);
+  stroke: var(--accent);
+  cursor: grab;
+  outline: none;
+}
+.crop-handle:focus-visible,
+.crop-handle[data-active="true"] {
+  fill: var(--accent);
+  fill-opacity: 0.35;
+}
+.crop-loupe {
+  position: absolute;
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  border: 3px solid var(--accent);
+  box-shadow: var(--shadow);
+  background-repeat: no-repeat;
+  background-color: #000;
+  pointer-events: none;
+}
+.crop-loupe::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border: 1.5px solid #fff;
+  border-radius: 50%;
+  mix-blend-mode: difference;
+}
+.crop-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+.crop-wait {
+  padding: 40px 0;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* Camera: the whole screen, whatever the theme. */
+.cam {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: #000;
+  color: #fff;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.cam-top,
+.cam-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+}
+.cam-bottom {
+  padding-bottom: 22px;
+}
+.cam-tip {
+  flex: 1;
+  margin: 0;
+  text-align: center;
+  font-size: 0.88rem;
+  color: rgb(255 255 255 / 0.8);
+}
+.cam-round {
+  width: 48px;
+  min-height: 48px;
+  padding: 0;
+  background: rgb(255 255 255 / 0.14);
+  color: #fff;
+}
+.cam-round[aria-pressed="true"] {
+  background: #fff;
+  color: #000;
+}
+.cam-round-spacer {
+  width: 48px;
+}
+.cam-view {
+  position: relative;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.cam-view video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.cam-msg {
+  position: absolute;
+  inset: auto 24px;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  margin: 0;
+  text-align: center;
+  color: rgb(255 255 255 / 0.85);
+}
+.cam-msg p {
+  margin: 0;
+  max-width: 36ch;
+}
+.cam-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  animation: cam-flash 0.25s ease-out;
+}
+@keyframes cam-flash {
+  from {
+    opacity: 0.7;
+  }
+}
+.cam-shutter {
+  width: 72px;
+  height: 72px;
+  min-height: 72px;
+  padding: 0;
+  border-radius: 50%;
+  background: #fff;
+  border: 0;
+  box-shadow: 0 0 0 4px #000, 0 0 0 7px #fff;
+}
+.cam-shutter:active:not(:disabled) {
+  transform: scale(0.94);
+}
+.cam-thumb {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  min-height: 52px;
+  padding: 0;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 0.14);
+  border: 2px solid rgb(255 255 255 / 0.6);
+  overflow: visible;
+}
+.cam-thumb:disabled {
+  opacity: 0.4;
+}
+.cam-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.cam-count {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  min-width: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 22px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cam-flash {
+    animation: none;
+  }
+}

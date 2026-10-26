@@ -8,6 +8,7 @@ const PATHS: Record<string, string> = {
   offline: "M3 3l18 18M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 5-2.7M12 20h.01M19 13a10 10 0 0 0-2.2-1.6",
   download: "M12 4v11M7 10l5 5 5-5M5 20h14",
   back: "M15 18l-6-6 6-6",
+  forward: "M9 18l6-6-6-6",
   up: "M6 15l6-6 6 6",
   down: "M6 9l6 6 6-6",
   x: "M6 6l12 12M18 6L6 18",
@@ -40,6 +41,10 @@ const PATHS: Record<string, string> = {
   "rotate-ccw": "M4 11a8 8 0 1 0 2.3-5.7M4 4v5h5",
   copy: "M8 8h12v12H8zM16 8V4H4v12h4",
   page: "M6 3h12v18H6z",
+  camera: "M3 8h4l2-3h6l2 3h4v11H3zM12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z",
+  scan: "M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M7 12h10",
+  share: "M12 3v12M8 7l4-4 4 4M5 12v8h14v-8",
+  flash: "M13 3L5 13h6l-1 8 8-10h-6z",
 };
 
 export function Icon({ name, label }: { name: string; label?: string }) {

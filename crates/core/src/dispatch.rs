@@ -105,6 +105,8 @@ pub const OPS: &[&str] = &[
     "image",
     "image-compress",
     "image-strip",
+    "scan-detect",
+    "scan",
     "rebuild-raster",
     "text-layer",
     "markdown",
@@ -286,6 +288,28 @@ pub fn run(op: &str, inputs: Vec<Vec<u8>>, options: &str) -> Result<Output> {
             Output {
                 files: vec![file(suffix, ext, bytes)],
                 report: serde_json::to_value(report)?,
+            }
+        }
+        "scan-detect" => {
+            let found = inputs
+                .iter()
+                .map(|b| Ok(scan::detect(&images::decode(b)?)))
+                .collect::<Result<Vec<_>>>()?;
+            Output {
+                files: vec![],
+                report: json!({ "pages": found }),
+            }
+        }
+        "scan" => {
+            let pages = scan::scan(&inputs, &parse(&options)?)?;
+            let report = json!({ "pages": pages.iter().map(|p| &p.2).collect::<Vec<_>>() });
+            Output {
+                files: pages
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (bytes, ext, _))| file(&format!("scan-{}", i + 1), ext, bytes))
+                    .collect(),
+                report,
             }
         }
         "image-strip" => {

@@ -200,6 +200,24 @@ async function pagesText(engine: Engine, pdf: Uint8Array, o: Options, progress?:
   return { pages: text.report.pages, ocrPages };
 }
 
+/** Recognize the pages without text (all of them with `force`) and add an invisible text layer. */
+async function ocrPdf(engine: Engine, pdf: Uint8Array, o: Options, progress?: Progress): Promise<RunResult> {
+  const dpi = num(o.dpi) ?? 200;
+  const text = await engine.render<{ pages: TextPage[] }>("text", [pdf], { pages: str(o.pages), ...pw(o) });
+  const todo = text.report.pages.filter((p) => bool(o.force) || p.spans.length === 0);
+  const pages = [];
+  for (const [i, p] of todo.entries()) {
+    progress?.(i, todo.length, `Recognizing page ${p.page + 1}`);
+    const img = await renderPage(engine, pdf, p.page, dpi, str(o.password));
+    const lines = await engine.ocr(img.pixels, img.width, img.height);
+    pages.push({ page: p.page, width: img.width, height: img.height, words: lines.flatMap((l) => l.words) });
+  }
+  progress?.(todo.length, todo.length, "Writing the text layer");
+  const out = await engine.core("text-layer", [pdf], { pages, ...pw(o) });
+  const words = pages.reduce((n, p) => n + p.words.length, 0);
+  return { files: out.files, report: { pagesRecognized: pages.map((p) => p.page + 1), words, skipped: text.report.pages.length - todo.length } };
+}
+
 async function markdown(engine: Engine, pdf: Uint8Array, o: Options, plain: boolean, progress?: Progress) {
   const { pages, ocrPages } = await pagesText(engine, pdf, o, progress);
   const md = await engine.core("markdown", [], { pages, plain, pageBreaks: bool(o.pageBreaks) });
@@ -473,6 +491,59 @@ export const tools: Tool[] = [
     input: "images",
     fields: imagePageFields,
     run: (engine, inputs, o) => engine.core("img2pdf", inputs, imagePageOptions(o)),
+  },
+  {
+    id: "scan",
+    title: "Scan documents",
+    summary: "Photos of paper → a clean PDF: finds the sheet, straightens it, whitens the page. Optional OCR.",
+    category: "convert",
+    input: "images",
+    aliases: ["scanner", "camera"],
+    fields: [
+      {
+        kind: "select",
+        name: "filter",
+        label: "Look",
+        default: "color",
+        choices: [
+          { value: "color", label: "Color · white paper" },
+          { value: "gray", label: "Grayscale" },
+          { value: "bw", label: "Black and white · smallest" },
+          { value: "original", label: "Original photo" },
+        ],
+      },
+      // A scanned sheet fills its page.
+      ...imagePageFields.map((f): Field => (f.kind === "number" && f.name === "margin" ? { ...f, default: 0 } : f)),
+      { kind: "boolean", name: "ocr", label: "Make the text searchable (OCR)", default: false },
+      {
+        kind: "textarea",
+        name: "corners",
+        label: "Page corners (JSON)",
+        advanced: true,
+        placeholder: '[{ "corners": [[40, 30], [980, 50], [960, 1400], [20, 1380]], "rotate": 90 }]',
+        help: "One entry per photo: the sheet's corners in pixels (top-left, top-right, bottom-right, bottom-left) and a clockwise rotation. Photos without an entry are detected. On the command line, @file.json reads a file.",
+      },
+    ],
+    async run(engine, inputs, o, progress) {
+      let pages: unknown = [];
+      if (str(o.corners)) {
+        try {
+          pages = JSON.parse(str(o.corners)!);
+        } catch {
+          throw new EngineError("invalid_option", "page corners must be JSON");
+        }
+      }
+      const ocr = bool(o.ocr);
+      const steps = ocr ? 3 : 2;
+      progress?.(0, steps, "Straightening the pages");
+      const scanned = await engine.core("scan", inputs, { pages, filter: str(o.filter) ?? "color" });
+      progress?.(1, steps, "Making the PDF");
+      const made = await engine.core("img2pdf", scanned.files.map((f) => f.bytes), imagePageOptions(o));
+      const pdf = { ...made.files[0]!, suffix: "scan" };
+      if (!ocr) return { files: [pdf], report: scanned.report };
+      const searchable = await ocrPdf(engine, pdf.bytes, {}, (done, total, label) => progress?.(2 + done / Math.max(total, 1), steps, label));
+      return { files: [{ ...searchable.files[0]!, suffix: "scan" }], report: { ...(scanned.report as object), ...(searchable.report as object) } };
+    },
   },
   {
     id: "pdf2img",
@@ -835,22 +906,7 @@ export const tools: Tool[] = [
       pagesField(),
       password,
     ],
-    async run(engine, [pdf], o, progress) {
-      const dpi = num(o.dpi) ?? 200;
-      const text = await engine.render<{ pages: TextPage[] }>("text", [pdf!], { pages: str(o.pages), ...pw(o) });
-      const todo = text.report.pages.filter((p) => bool(o.force) || p.spans.length === 0);
-      const pages = [];
-      for (const [i, p] of todo.entries()) {
-        progress?.(i, todo.length, `Recognizing page ${p.page + 1}`);
-        const img = await renderPage(engine, pdf!, p.page, dpi, str(o.password));
-        const lines = await engine.ocr(img.pixels, img.width, img.height);
-        pages.push({ page: p.page, width: img.width, height: img.height, words: lines.flatMap((l) => l.words) });
-      }
-      progress?.(todo.length, todo.length, "Writing the text layer");
-      const out = await engine.core("text-layer", [pdf!], { pages, ...pw(o) });
-      const words = pages.reduce((n, p) => n + p.words.length, 0);
-      return { files: out.files, report: { pagesRecognized: pages.map((p) => p.page + 1), words, skipped: text.report.pages.length - todo.length } };
-    },
+    run: (engine, [pdf], o, progress) => ocrPdf(engine, pdf!, o, progress),
   },
   {
     id: "to-md",

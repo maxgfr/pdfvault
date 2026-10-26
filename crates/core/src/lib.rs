@@ -22,6 +22,7 @@ pub mod pdf;
 pub mod pdffont;
 pub mod raster;
 pub mod redact;
+pub mod scan;
 pub mod scrub;
 pub mod security;
 pub mod stamp;

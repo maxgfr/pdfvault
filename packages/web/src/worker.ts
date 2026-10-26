@@ -6,7 +6,7 @@ import { Engine, EngineError, previewPages, toolById, withDefaults, type EditOps
 declare const self: DedicatedWorkerGlobalScope;
 
 /** Core operations the page may call directly, outside the tool registry. */
-export const DIRECT_OPS = ["kdf", "zip", "meta-read", "info", "form-fields", "text-runs"] as const;
+export const DIRECT_OPS = ["kdf", "zip", "meta-read", "info", "form-fields", "text-runs", "scan-detect", "scan"] as const;
 
 export interface JobRequest {
   /** A tool id, or `core:<op>` for one of DIRECT_OPS. */

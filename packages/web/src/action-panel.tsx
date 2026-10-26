@@ -61,6 +61,33 @@ export function download(name: string, data: Uint8Array) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
+const asFile = (name: string, data: Uint8Array) =>
+  new File([data as BlobPart], name, { type: MIME[name.split(".").pop() ?? ""] ?? "application/octet-stream" });
+
+/** Whether the system share sheet takes files (phones, some desktops). */
+export function canShare(name: string, data: Uint8Array): boolean {
+  return typeof navigator.canShare === "function" && navigator.canShare({ files: [asFile(name, data)] });
+}
+
+/** Hand the file to another app (Mail, Messages, Drive…). Closing the sheet is not an error. */
+export async function share(name: string, data: Uint8Array) {
+  try {
+    await navigator.share({ files: [asFile(name, data)], title: name });
+  } catch (e) {
+    if (!(e instanceof DOMException && e.name === "AbortError")) throw e;
+  }
+}
+
+/** A Share button, rendered only where the browser can share files. */
+export function ShareButton({ name, data, className = "secondary small" }: { name: string; data: Uint8Array; className?: string }) {
+  if (!canShare(name, data)) return null;
+  return (
+    <button type="button" className={className} onClick={() => void share(name, data)}>
+      <Icon name="share" /> Share
+    </button>
+  );
+}
+
 /** Batch tools run once per file of their first slot; the others once over every slot. */
 function jobsOf(g: Group): InFile[][] {
   return g.tool.input === "pdf" || g.tool.input === "image" ? g.slots[0]!.map((f) => [f]) : [g.slots.flat()];
@@ -268,6 +295,7 @@ export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, res
                       >
                         <Icon name="download" /> Download
                       </button>
+                      <ShareButton name={f.name} data={f.bytes} />
                       {unlocked ? (
                         <button
                           type="button"

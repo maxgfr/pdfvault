@@ -38,7 +38,7 @@ Keep only the final file: delete the outputs of earlier rungs. Report the before
 
 ## Other tools
 
-Each command's `--help` is authoritative. The common ones: `merge a.pdf b.pdf -o all.pdf`; `combine scan.pdf photo.jpg receipt.png -o all.pdf` (PDFs and images in the given order, each image a page); `split --every 1` or `--mode ranges --ranges 1-3,4-` or `--mode bookmarks`; `extract --pages 2-5`; `delete --pages 1`; `reorder --order 3,1,2`; `rotate --angle 90 --pages 2`; `encrypt --user-password …` (AES-256); `decrypt --password …`; `ocr scan.pdf` (adds an invisible text layer; pages that already have text are skipped unless `--force`); `to-md`, `to-text`, `to-epub` (OCR on pages without text); `img compress|resize|convert|strip`.
+Each command's `--help` is authoritative. The common ones: `merge a.pdf b.pdf -o all.pdf`; `combine scan.pdf photo.jpg receipt.png -o all.pdf` (PDFs and images in the given order, each image a page); `scan page1.jpg page2.jpg -o doc.pdf` (photos of paper: finds the sheet, straightens it, evens out the light; `--filter color|gray|bw|original`, `--ocr`, and `--corners '[{"corners":[[x,y],…4 points TL,TR,BR,BL],"rotate":90}]'` when detection misses; its `--json` report gives the corners it used); `split --every 1` or `--mode ranges --ranges 1-3,4-` or `--mode bookmarks`; `extract --pages 2-5`; `delete --pages 1`; `reorder --order 3,1,2`; `rotate --angle 90 --pages 2`; `encrypt --user-password …` (AES-256); `decrypt --password …`; `ocr scan.pdf` (adds an invisible text layer; pages that already have text are skipped unless `--force`); `to-md`, `to-text`, `to-epub` (OCR on pages without text); `img compress|resize|convert|strip`.
 
 ## Edit a PDF
 

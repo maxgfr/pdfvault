@@ -4,6 +4,7 @@ import { About } from "./about.tsx";
 import { EditorPage } from "./editor/editor-page.tsx";
 import { Home } from "./home.tsx";
 import { Icon } from "./icons.tsx";
+import { ScanPage } from "./scan/scan-page.tsx";
 import { ToolPage } from "./tool-page.tsx";
 import { VaultPage } from "./vault-page.tsx";
 import { ViewerPage } from "./viewer-page.tsx";
@@ -35,13 +36,13 @@ export function useOffline(): { offlineReady: boolean } {
 
 export function App() {
   const route = useRoute();
-  // The editor has its own page; the registry's "edit" tool is what it runs.
-  const tool = route === "edit" ? undefined : toolById.get(route);
+  // The editor and the scanner have their own pages; their registry tools are what they run.
+  const tool = route === "edit" || route === "scan" ? undefined : toolById.get(route);
   const unlocked = useSyncExternalStore((fn) => vault.subscribe(fn), () => vault.unlocked);
   const { offlineReady } = useOffline();
   const files = useWorkspace();
   useEffect(() => {
-    const titles: Record<string, string> = { vault: "Vault", view: "PDF viewer", edit: "Edit PDF", privacy: "Privacy" };
+    const titles: Record<string, string> = { vault: "Vault", view: "PDF viewer", edit: "Edit PDF", scan: "Scan documents", privacy: "Privacy" };
     document.title = tool ? `${tool.title} · pdfvault` : titles[route] ? `${titles[route]} · pdfvault` : "pdfvault: private PDF tools";
   }, [tool, route]);
 
@@ -78,6 +79,8 @@ export function App() {
           <ToolPage key={tool.id} tool={tool} />
         ) : route === "edit" ? (
           <EditorPage />
+        ) : route === "scan" ? (
+          <ScanPage />
         ) : route === "vault" ? (
           <VaultPage />
         ) : route === "view" ? (

@@ -336,6 +336,33 @@ describe("text and OCR", () => {
   }, 120_000);
 });
 
+describe("scan", () => {
+  test("photos become a PDF, black and white is smaller", async () => {
+    const photo = await fixture("photo.jpg");
+    const color = await run("scan", [photo, photo]);
+    expect(await pages(firstPdf(color))).toBe(2);
+    await qpdfCheck(firstPdf(color));
+    expect(color.report).toMatchObject({ pages: [{ detected: true }, { detected: true }] });
+    const bw = await run("scan", [photo], { filter: "bw" });
+    expect(firstPdf(bw).length).toBeLessThan(firstPdf(color).length / 2);
+  });
+
+  test("given corners and rotation are used, bad JSON is refused", async () => {
+    const photo = await fixture("photo.jpg");
+    const corners = JSON.stringify([{ corners: [[0, 0], [100, 0], [100, 50], [0, 50]], rotate: 90 }]);
+    const r = await run("scan", [photo], { corners });
+    expect(r.report).toMatchObject({ pages: [{ detected: false, width: 50, height: 100 }] });
+    await expect(run("scan", [photo], { corners: "{" })).rejects.toThrow("JSON");
+  });
+
+  test("OCR makes the scan searchable", async () => {
+    const page = (await run("pdf2img", [await fixture("text-3.pdf")], { pages: "1", dpi: 150 })).files[0]!.bytes;
+    const r = await run("scan", [page], { ocr: true });
+    const text = new TextDecoder().decode((await run("to-text", [firstPdf(r)], { ocr: false })).files[0]!.bytes);
+    expect(text).toContain("quick brown fox");
+  }, 60_000);
+});
+
 describe("images", () => {
   test("img2pdf keeps JPEG bytes and handles PNG alpha", async () => {
     const r = await run("img2pdf", [await fixture("photo.jpg"), await fixture("signature.png")]);

@@ -33,6 +33,18 @@ test("parity: edit (the editor's page strip)", async ({ page }) => {
   expect(sha256(bytes)).toBe(sha256(new Uint8Array(out)));
 });
 
+test("parity: scan (detected corners sent back by the page)", async ({ page }) => {
+  await page.goto("./#/scan");
+  await page.getByLabel("Photos to scan").setInputFiles(fixture("photo.jpg"));
+  await expect(page.getByRole("list", { name: "Pages" }).locator("img")).toHaveCount(1, { timeout: 30_000 });
+  await page.getByRole("button", { name: "Make the PDF (1 page)" }).click();
+  const result = page.getByRole("region", { name: "Result" });
+  const [dl] = await Promise.all([page.waitForEvent("download"), result.getByRole("button", { name: "Download" }).click()]);
+  const bytes = new Uint8Array(await readFile((await dl.path())!));
+  const out = execFileSync(cli[0]!, [...cli.slice(1), "scan", fixture("photo.jpg"), "-o", "-"]);
+  expect(sha256(bytes)).toBe(sha256(new Uint8Array(out)));
+});
+
 for (const c of cases) {
   test(`parity: ${c.id}`, async ({ page }) => {
     const { bytes } = await runTool(page, c.id, c.title, [c.files], c.ui);
