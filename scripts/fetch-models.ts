@@ -3,11 +3,12 @@
 // 1.1, metric-compatible with Arial, Times New Roman and Courier New) into
 // models/fonts/ for text the editor writes. The site and the CLI ship the
 // fonts; the site serves the models for users to download on first OCR, and
-// the tests read them from here.
+// the tests read them from here. GLM-OCR (several hundred MB) is not fetched:
+// the site downloads it from Hugging Face, and only when a user asks.
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MODEL_PACKS } from "../packages/engine/src/models.ts";
+import { MODEL_PACKS, type ModelPack } from "../packages/engine/src/models.ts";
 
 const FONTS_ARCHIVE = {
   url: "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
@@ -52,7 +53,8 @@ async function download(url: string, expected: string, label: string): Promise<A
 }
 
 await mkdir(fontDir, { recursive: true });
-for (const { name, url, sha256: expected } of Object.values(MODEL_PACKS).flatMap((p) => p.files)) {
+const served: ModelPack[] = Object.values(MODEL_PACKS).filter((p: ModelPack) => p.webSource === "self");
+for (const { name, url, sha256: expected } of served.flatMap((p) => p.files)) {
   if (await intact(dir + name, expected)) {
     console.log(`${name}: ok`);
     continue;

@@ -1,6 +1,7 @@
 // Binaries the CLI ships with. `type: "file"` embeds them in the compiled
 // executable and copies them next to the npm bundle. The OCR models are not
-// among them: they are read from the model folder (models.ts).
+// among them: they are read from the model folder (models.ts), and GLM-OCR
+// runs on the runtime installed there.
 import coreWasm from "../../engine/wasm/core/core_bg.wasm" with { type: "file" };
 import ocrWasm from "../../engine/wasm/ocr/ocr_bg.wasm" with { type: "file" };
 import renderWasm from "../../engine/wasm/render/render_bg.wasm" with { type: "file" };
@@ -16,9 +17,9 @@ import serifBold from "../../../models/fonts/LiberationSerif-Bold.ttf" with { ty
 import serifBoldItalic from "../../../models/fonts/LiberationSerif-BoldItalic.ttf" with { type: "file" };
 import serifItalic from "../../../models/fonts/LiberationSerif-Italic.ttf" with { type: "file" };
 import serifRegular from "../../../models/fonts/LiberationSerif-Regular.ttf" with { type: "file" };
-import { join } from "node:path";
-import { EngineError, MODEL_PACKS, megabytes, packBytes, packOf, type FontFile, type Loader } from "@pdfvault/engine";
-import { modelDir } from "./models.ts";
+import { join, sep } from "node:path";
+import { EngineError, MODEL_PACKS, glmRecognizer, megabytes, packOf, type FontFile, type Loader, type ModelPackId, type Transformers } from "@pdfvault/engine";
+import { downloadBytes, installed, modelDir, runtimeDir } from "./models.ts";
 import { systemFont } from "./system-fonts.ts";
 
 // The npm bundle gets paths relative to itself, not to the working directory.
@@ -42,17 +43,36 @@ const fonts: Record<FontFile, string> = {
   "LiberationMono-BoldItalic.ttf": path(monoBoldItalic),
 };
 
+const missing = (id: ModelPackId) =>
+  new EngineError("model_missing", `the ${MODEL_PACKS[id].title} model is not downloaded (${megabytes(downloadBytes(id))}): run \`pdfvault models pull ${id}\`, or pass --download`, id);
+
+/** Transformers.js from the runtime `models pull glm` installed, reading only the model folder. */
+async function glm() {
+  if (!(await installed("glm")).complete) throw missing("glm");
+  // The pinned version's Node entry, by path: a compiled pdfvault does not resolve packages from other folders.
+  const entry = join(runtimeDir(), "node_modules", "@huggingface", "transformers", "dist", "transformers.node.mjs");
+  const tf = (await import(entry)) as Transformers & { env: Record<string, unknown> };
+  Object.assign(tf.env, {
+    allowRemoteModels: false,
+    allowLocalModels: true,
+    localModelPath: modelDir() + sep,
+    useFSCache: false,
+    // Never the network, whatever a file lookup tries.
+    fetch: () => Promise.reject(new Error("GLM-OCR only reads downloaded files")),
+  });
+  return glmRecognizer(tf, "cpu");
+}
+
 export const loader: Loader = {
   wasm: (name) => Bun.file(at(wasm[name])).arrayBuffer(),
   async model(name) {
     const file = Bun.file(join(modelDir(), name));
     const id = packOf(name);
     const expected = MODEL_PACKS[id].files.find((f) => f.name === name)!.bytes;
-    if (!(await file.exists()) || file.size !== expected) {
-      throw new EngineError("model_missing", `the ${MODEL_PACKS[id].title} model is not downloaded (${megabytes(packBytes(id))}): run \`pdfvault models pull ${id}\`, or pass --download`, id);
-    }
+    if (!(await file.exists()) || file.size !== expected) throw missing(id);
     return file.bytes();
   },
   font: async (name) => new Uint8Array(await Bun.file(at(fonts[name])).arrayBuffer()),
   systemFont,
+  glm,
 };

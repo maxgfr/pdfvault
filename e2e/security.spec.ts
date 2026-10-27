@@ -4,7 +4,8 @@ import { fixture, runTool, siteURL, watch } from "./helpers.ts";
 test("the page sets a strict CSP and no referrer", async ({ page }) => {
   await page.goto("./");
   const csp = await page.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute("content");
-  for (const d of ["default-src 'self'", "connect-src 'self'", "object-src 'none'", "form-action 'none'", "require-trusted-types-for 'script'"]) {
+  // Hugging Face only for GLM-OCR, which the user downloads from there after agreeing.
+  for (const d of ["default-src 'self';", "connect-src 'self' https://huggingface.co https://*.hf.co;", "object-src 'none'", "form-action 'none'", "require-trusted-types-for 'script'"]) {
     expect(csp).toContain(d);
   }
   expect(await page.locator('meta[name="referrer"]').getAttribute("content")).toBe("no-referrer");
@@ -77,6 +78,7 @@ test("the OCR model is downloaded only when asked, works offline, and can be del
   await page.getByRole("button", { name: "OCR (searchable PDF)", exact: true }).click();
   const prompt = page.getByRole("alert").filter({ hasText: "31 MB" });
   await expect(prompt).toBeVisible({ timeout: 60_000 });
+  await expect(prompt).toContainText("download from this site");
   expect(models, "nothing downloaded before the user agrees").toEqual([]);
   await prompt.getByRole("button", { name: "Not now" }).click();
   await expect(prompt).toBeHidden();
@@ -93,10 +95,48 @@ test("the OCR model is downloaded only when asked, works offline, and can be del
 
   // The Privacy page deletes it, and the next OCR asks again.
   await page.goto("./#/privacy");
-  await page.getByRole("button", { name: "Delete" }).click();
-  await expect(page.getByText("Not downloaded")).toBeVisible();
+  const stored = page.locator("ul.files > li");
+  const paddle = stored.filter({ hasText: "PP-OCRv6" });
+  await paddle.getByRole("button", { name: "Delete" }).click();
+  await expect(paddle).toContainText("Not downloaded");
+  await expect(stored.filter({ hasText: "GLM-OCR" })).toContainText("Not downloaded");
   await page.goto("./#/ocr");
   await page.locator('input[type="file"]').first().setInputFiles(fixture("scan.pdf"));
   await page.getByRole("button", { name: "OCR (searchable PDF)", exact: true }).click();
   await expect(page.getByRole("button", { name: "Download and continue" })).toBeVisible({ timeout: 60_000 });
+});
+
+test("GLM-OCR is offered for text outputs and asks before anything goes to Hugging Face", async ({ page }) => {
+  const w = await watch(page);
+  // Pretend WebGPU works (CI has no GPU): the consent card comes before any GPU work, and it is not clicked.
+  await page.addInitScript(() => Object.defineProperty(navigator, "gpu", { value: { requestAdapter: async () => ({}) } }));
+  await page.goto("./");
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.goto("./#/to-md");
+  await page.locator('input[type="file"]').first().setInputFiles(fixture("scan.pdf"));
+  const engine = page.getByLabel("Text recognition", { exact: true });
+  await expect(engine).toHaveValue("paddle");
+  await expect(engine.locator("option")).toHaveText(["PP-OCRv6 · fast", "GLM-OCR · tables and formulas, slow"]);
+  // Only with OCR on.
+  await page.getByLabel("OCR pages without text", { exact: true }).uncheck();
+  await expect(engine).toBeHidden();
+  await page.getByLabel("OCR pages without text", { exact: true }).check();
+  await engine.selectOption("glm");
+  await page.getByRole("button", { name: "PDF to Markdown", exact: true }).click();
+  const prompt = page.getByRole("alert").filter({ hasText: "GLM-OCR" });
+  await expect(prompt).toBeVisible({ timeout: 60_000 });
+  await expect(prompt).toContainText("742 MB");
+  await expect(prompt).toContainText("download from huggingface.co");
+  await prompt.getByRole("button", { name: "Not now" }).click();
+  await expect(prompt).toBeHidden();
+  await w.assertClean();
+});
+
+test("GLM-OCR cannot be picked where WebGPU is missing", async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, "gpu", { value: undefined }));
+  await page.goto("./#/to-text");
+  await expect(page.getByRole("option", { name: /GLM-OCR/ })).toBeDisabled();
+  await expect(page.getByText("GLM-OCR needs WebGPU")).toBeVisible();
+  await page.goto("./#/ocr");
+  await expect(page.getByLabel("Text recognition", { exact: true })).toHaveCount(0);
 });

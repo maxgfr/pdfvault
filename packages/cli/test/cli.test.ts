@@ -196,12 +196,27 @@ describe("OCR models", () => {
     expect(cli(["models", "rm", "--all"], undefined, env).err).toContain("paddle: not downloaded");
   }, 60_000);
 
+  test("GLM-OCR is listed and asked for like PP-OCRv6, never downloaded by itself", () => {
+    const env = { PDFVAULT_MODELS: join(dir, "no-glm") };
+    const list = JSON.parse(cli(["models", "list", "--json"], undefined, env).out);
+    expect(list.models).toContainEqual(expect.objectContaining({ id: "glm", installed: false }));
+    expect(cli(["models"], undefined, env).out).toMatch(/glm\s+not downloaded\s+859 MB/);
+    expect(cli(["to-md", "--help"]).out).toContain("--engine <paddle|glm>");
+    const r = cli(["to-md", "photo.pdf", "--engine", "glm", "--json"], undefined, env);
+    expect(r.code).toBe(1);
+    const error = JSON.parse(r.out).results[0].error;
+    expect(error.code).toBe("model_missing");
+    expect(error.message).toContain("pdfvault models pull glm");
+    expect(r.err).toContain("about a minute per scanned page");
+    expect(cli(["models", "rm", "glm"], undefined, env).err).toContain("glm: not downloaded");
+  });
+
   test("models usage errors exit 2", () => {
     expect(cli(["models", "pull"]).code).toBe(2);
     expect(cli(["models", "pull", "nope"]).code).toBe(2);
     expect(cli(["models", "rm"]).code).toBe(2);
     expect(cli(["models", "frobnicate"]).code).toBe(2);
-    expect(cli(["models", "--help"]).out).toContain("pdfvault models pull");
+    expect(cli(["models", "--help"]).out).toContain("pdfvault models pull <paddle|glm>");
   });
 });
 

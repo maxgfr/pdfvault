@@ -1,8 +1,9 @@
 /// <reference lib="webworker" />
 // One worker per job: the page stays responsive, and terminating the worker
 // returns every byte of wasm memory to the browser.
-import { Engine, EngineError, previewPages, toolById, withDefaults, type EditOps, type Loader, type ModuleName, type Options } from "@pdfvault/engine";
-import { readModel } from "./models.ts";
+import { Engine, EngineError, glmRecognizer, previewPages, toolById, withDefaults, type EditOps, type Loader, type ModuleName, type Options } from "@pdfvault/engine";
+import { glmUnsupported } from "./glm-support.ts";
+import { glmFiles, readModel, requireInstalled } from "./models.ts";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -41,6 +42,13 @@ self.onmessage = async (event: MessageEvent<JobRequest>) => {
       const res = await fetch(new URL(`./fonts/${name}`, self.location.href));
       if (!res.ok) throw new EngineError("internal", `could not load ${name} (${res.status})`);
       return new Uint8Array(await res.arrayBuffer());
+    },
+    // The page only offers GLM-OCR where WebGPU works, so the download prompt comes first.
+    async glm() {
+      await requireInstalled("glm");
+      const why = await glmUnsupported();
+      if (why) throw new EngineError("unsupported", why);
+      return (await import("./glm.ts")).loadGlm(glmRecognizer, glmFiles);
     },
   };
   try {

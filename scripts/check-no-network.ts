@@ -18,8 +18,15 @@ const ALLOWED_HOSTS: [string, string][] = [
   ["ns.adobe.com", "XMP namespace strings inside the PDF engine"],
   [
     "huggingface.co",
-    "upstream source of each OCR model in the shared catalog (models.ts), which the CLI downloads from; the site downloads the same pinned files from its own origin, and its CSP (connect-src 'self') would block this host",
+    "upstream source of each OCR model in the shared catalog (models.ts). The site downloads GLM-OCR's pinned files from there, only after the user agrees (the CSP's connect-src allows huggingface.co and its *.hf.co download servers for that); PP-OCRv6 comes from the site's own origin, and the CLI downloads both from there. Also Transformers.js's default model host, disabled in glm.ts (allowRemoteModels = false, fetch refused)",
   ],
+  [
+    "cdn.jsdelivr.net",
+    "Transformers.js's default location for ONNX Runtime's wasm, in the GLM-OCR chunk; glm.ts points it at the site's own ort/ before any session starts, and the CSP (script-src and connect-src 'self') would block this host",
+  ],
+  ["developer.mozilla.org", "a documentation link inside a Transformers.js error message (GLM-OCR chunk), never requested"],
+  ["web.dev", "documentation link inside an ONNX Runtime error message (GLM-OCR chunk), never requested"],
+  ["gist.github.com", "a link inside a Transformers.js error message (GLM-OCR chunk), never requested"],
 ];
 
 const URL_RE = /\bhttps?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi;
