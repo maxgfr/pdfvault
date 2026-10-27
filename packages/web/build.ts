@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { MODEL_PACKS } from "../engine/src/models.ts";
 
 const here = new URL(".", import.meta.url).pathname;
 const root = new URL("../../", import.meta.url).pathname;
@@ -56,8 +57,9 @@ for (const name of ["core", "render", "ocr"]) {
   await mkdir(`${dist}/wasm`, { recursive: true });
   await cp(`${root}packages/engine/wasm/${name}/${name}_bg.wasm`, `${dist}/wasm/${name}.wasm`);
 }
+// The OCR models, served for users to download when they first need OCR.
 await mkdir(`${dist}/models`, { recursive: true });
-for (const m of ["text-detection.rten", "text-recognition.rten"]) await cp(`${root}models/${m}`, `${dist}/models/${m}`);
+for (const { name } of MODEL_PACKS.paddle.files) await cp(`${root}models/${name}`, `${dist}/models/${name}`);
 // The fonts the editor writes and previews text with (SIL OFL 1.1, licence alongside).
 await mkdir(`${dist}/fonts`, { recursive: true });
 for (const f of await readdir(`${root}models/fonts`)) {
@@ -83,8 +85,9 @@ for await (const p of walk(dist)) {
   hash.update(rel).update(new Uint8Array(await Bun.file(p).arrayBuffer()));
 }
 files.sort();
-const lazy = files.filter((f) => f.startsWith("models/") || f.startsWith("fonts/") || f === "wasm/render.wasm" || f === "wasm/ocr.wasm");
-const precache = ["./", ...files.filter((f) => f !== "index.html" && !lazy.includes(f))];
+const lazy = files.filter((f) => f.startsWith("fonts/") || f === "wasm/render.wasm" || f === "wasm/ocr.wasm");
+// Models stay out of both lists: only the user's "Download" puts them on the device.
+const precache = ["./", ...files.filter((f) => f !== "index.html" && !f.startsWith("models/") && !lazy.includes(f))];
 const manifest = { version: hash.digest("hex").slice(0, 16), precache, lazy };
 
 check(

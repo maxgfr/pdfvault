@@ -7,16 +7,23 @@ import { stat } from "node:fs/promises";
 import {
   Engine,
   EngineError,
+  MODEL_PACKS,
+  isModelPackId,
+  megabytes,
+  modelPackIds,
   outputName,
+  packBytes,
   toolById,
   tools,
   withDefaults,
   type Field,
+  type ModelPackId,
   type Options,
   type OutFile,
   type Tool,
 } from "@pdfvault/engine";
 import { loader } from "./loader.ts";
+import { installed, modelDir, pull, remove } from "./models.ts";
 import { INSTALL_HINT, SKILL } from "./skill.ts";
 import pkg from "../package.json" with { type: "json" };
 
@@ -40,7 +47,7 @@ interface JobResult {
   error?: { code: string; message: string };
 }
 
-const GLOBAL_FLAGS = new Set(["output", "json", "force", "quiet", "help", "version"]);
+const GLOBAL_FLAGS = new Set(["output", "json", "force", "quiet", "help", "version", "download"]);
 
 const kebab = (s: string) => s.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 const camel = (s: string) => s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -64,12 +71,14 @@ interface Parsed {
   force: boolean;
   quiet: boolean;
   help: boolean;
+  /** Download a missing OCR model without asking. */
+  download: boolean;
 }
 
 function parseArgs(tool: Tool, args: string[]): Parsed {
   const fields = new Map<string, Field>(tool.fields.map((f) => [f.name, f]));
   for (const f of tool.fields) if (f.cliAlias) fields.set(camel(f.cliAlias), f);
-  const p: Parsed = { positional: [], options: {}, json: false, force: false, quiet: false, help: false };
+  const p: Parsed = { positional: [], options: {}, json: false, force: false, quiet: false, help: false, download: false };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === "--") {
@@ -231,6 +240,9 @@ Usage: pdfvault <command> <files...> [options]
 Commands:
 ${lines.join("\n")}
 
+OCR models:
+  ${"models".padEnd(width)}List, download (pull) or delete (rm) the OCR models, kept in ${modelDir()}
+
 Agents:
   ${"skill".padEnd(width)}Print the agent skill for this version (install it: npx skills add maxgfr/pdfvault)
 
@@ -239,6 +251,7 @@ Global options:
   --json               print a machine-readable report on stdout
   -f, --force          overwrite existing output files (never the input)
   -q, --quiet          no progress or summary on stderr
+  --download           download a missing OCR model without asking
   -h, --help           help for a command
 
 Inputs may be globs ("scans/*.pdf") or "-" for stdin.
@@ -295,6 +308,79 @@ async function skill(args: string[]): Promise<number> {
   return EXIT_OK;
 }
 
+const MODELS_HELP = `pdfvault models [list] [--json]
+pdfvault models pull <${modelPackIds.join("|")}>
+pdfvault models rm <${modelPackIds.join("|")}> | --all
+
+OCR models are not part of pdfvault: they are downloaded the first time a
+command needs one (after asking, or with --download), checked against a pinned
+SHA-256, and kept in ${modelDir()} (set PDFVAULT_MODELS to move it).
+Delete them whenever you like; they come back on the next OCR.
+
+${modelPackIds.map((id) => `  ${id.padEnd(8)}${MODEL_PACKS[id].title}, ${megabytes(packBytes(id))} (${MODEL_PACKS[id].license})`).join("\n")}`;
+
+/** Download a pack, with a progress line on a terminal. */
+async function download(id: ModelPackId, quiet: boolean): Promise<void> {
+  const tty = process.stderr.isTTY && !quiet;
+  if (!quiet) process.stderr.write(`Downloading ${MODEL_PACKS[id].title} (${megabytes(packBytes(id))})…${tty ? "" : "\n"}`);
+  await pull(id, tty ? (done, total) => process.stderr.write(`\rDownloading ${MODEL_PACKS[id].title}: ${Math.floor((done / total) * 100)}%\x1b[K`) : undefined);
+  if (tty) process.stderr.write("\r\x1b[K");
+  if (!quiet) process.stderr.write(`${MODEL_PACKS[id].title} saved in ${modelDir()}. Delete it with: pdfvault models rm ${id}\n`);
+}
+
+async function models(args: string[]): Promise<number> {
+  const [sub = "list", ...rest] = args;
+  const json = rest.includes("--json") || sub === "--json";
+  const ids = rest.filter((a) => !a.startsWith("-"));
+  const usage = (msg: string) => {
+    process.stderr.write(`pdfvault models: ${msg}\n`);
+    return EXIT_USAGE;
+  };
+  if (sub === "--help" || sub === "-h" || rest.includes("--help")) {
+    process.stdout.write(MODELS_HELP + "\n");
+    return EXIT_OK;
+  }
+  if (sub === "list" || sub === "--json") {
+    const rows = await Promise.all(
+      modelPackIds.map(async (id) => ({ id, title: MODEL_PACKS[id].title, license: MODEL_PACKS[id].license, size: packBytes(id), ...(await installed(id)) })),
+    );
+    if (json) {
+      process.stdout.write(JSON.stringify({ dir: modelDir(), models: rows.map(({ id, title, license, size, complete }) => ({ id, title, license, size, installed: complete })) }, null, 2) + "\n");
+    } else {
+      for (const r of rows) {
+        const state = r.complete ? "installed" : r.bytes > 0 ? "partly downloaded" : "not downloaded";
+        process.stdout.write(`${r.id.padEnd(8)}${state.padEnd(19)}${megabytes(r.size).padStart(7)}  ${r.title}\n`);
+      }
+      process.stdout.write(`\nFolder: ${modelDir()}\n`);
+    }
+    return EXIT_OK;
+  }
+  if (sub === "pull") {
+    if (ids.length === 0) return usage(`pull needs a model: ${modelPackIds.join(", ")}`);
+    for (const id of ids) if (!isModelPackId(id)) return usage(`unknown model "${id}" (${modelPackIds.join(", ")})`);
+    for (const id of ids as ModelPackId[]) await download(id, rest.includes("--quiet") || rest.includes("-q"));
+    return EXIT_OK;
+  }
+  if (sub === "rm") {
+    const all = rest.includes("--all");
+    if (!all && ids.length === 0) return usage(`rm needs a model (${modelPackIds.join(", ")}) or --all`);
+    for (const id of ids) if (!isModelPackId(id)) return usage(`unknown model "${id}" (${modelPackIds.join(", ")})`);
+    for (const id of all ? modelPackIds : (ids as ModelPackId[])) {
+      const freed = await remove(id);
+      process.stderr.write(freed > 0 ? `${id}: deleted, ${megabytes(freed)} freed\n` : `${id}: not downloaded\n`);
+    }
+    return EXIT_OK;
+  }
+  return usage(`unknown subcommand "${sub}" (list, pull, rm)`);
+}
+
+/** Ask on the terminal; Enter means yes. */
+async function confirm(question: string): Promise<boolean> {
+  process.stderr.write(`${question} [Y/n] `);
+  for await (const line of console) return !/^\s*n/i.test(line);
+  return false;
+}
+
 export async function main(argv: string[]): Promise<number> {
   const out = (s: string) => process.stdout.write(s + "\n");
   const err = (s: string) => process.stderr.write(s + "\n");
@@ -307,6 +393,7 @@ export async function main(argv: string[]): Promise<number> {
     return EXIT_OK;
   }
   if (argv[0] === "skill") return skill(argv.slice(1));
+  if (argv[0] === "models") return models(argv.slice(1));
   if (argv[0] === "list") {
     out(JSON.stringify(tools.map((t) => ({ id: t.id, title: t.title, input: t.input, aliases: t.aliases ?? [] })), null, 2));
     return EXIT_OK;
@@ -358,11 +445,29 @@ export async function main(argv: string[]): Promise<number> {
   const progress = process.stderr.isTTY && !p.quiet && !p.json
     ? (done: number, total: number, label: string) => process.stderr.write(`\r${label} (${done + 1}/${total})…\x1b[K`)
     : undefined;
+  // A missing OCR model is downloaded, then the job runs again: with
+  // --download, or once the user agrees on a terminal (once per run).
+  const interactive = process.stdin.isTTY && process.stderr.isTTY && !p.json;
+  const asked = new Set<string>();
+  const run = async (bytes: Uint8Array[]) => {
+    for (;;) {
+      try {
+        return await tool.run(engine, bytes, options, progress);
+      } catch (e) {
+        const id = e instanceof EngineError && e.code === "model_missing" ? e.pack : undefined;
+        if (!id || !isModelPackId(id) || asked.has(id) || !(p.download || interactive)) throw e;
+        if (progress) process.stderr.write("\r\x1b[K");
+        asked.add(id);
+        if (!p.download && !(await confirm(`${tool.title} needs ${MODEL_PACKS[id].title}, a one-time ${megabytes(packBytes(id))} download. Download it?`))) throw e;
+        await download(id, p.quiet);
+      }
+    }
+  };
 
   for (const job of jobs(tool, inputs)) {
     const label = job.map((i) => i.name).join(" + ");
     try {
-      const result = await tool.run(engine, job.map((i) => i.bytes), options, progress);
+      const result = await run(job.map((i) => i.bytes));
       if (progress) process.stderr.write("\r\x1b[K");
       const outputs: { path: string; bytes: number }[] = [];
       if (toStdout) {

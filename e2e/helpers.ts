@@ -61,6 +61,10 @@ export async function runTool(
   }
   await page.getByRole("button", { name: title, exact: true }).click();
   const results = page.getByRole("region", { name: "Results" });
+  // A fresh browser has no OCR model: agree to the download, as a user would.
+  const getModel = page.getByRole("button", { name: "Download and continue" });
+  await expect(results.or(getModel)).toBeVisible({ timeout: 90_000 });
+  if (await getModel.isVisible()) await getModel.click();
   await expect(results).toBeVisible({ timeout: 90_000 });
   await expect(results.locator(".error-text")).toHaveCount(0);
   if (opts.download === false) return { results, bytes: null };

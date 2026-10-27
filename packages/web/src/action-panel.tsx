@@ -1,7 +1,8 @@
-import { EngineError, outputName, withDefaults, type Options, type Tool } from "@pdfvault/engine";
+import { EngineError, isModelPackId, outputName, withDefaults, type ModelPackId, type Options, type Tool } from "@pdfvault/engine";
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { FieldInput, visible } from "./fields.tsx";
 import { Icon } from "./icons.tsx";
+import { ModelPrompt } from "./model-prompt.tsx";
 import { Report, bytes } from "./reports.tsx";
 import { runJob, warmUp, zipFiles } from "./runner.ts";
 import { vault } from "./vault.ts";
@@ -115,6 +116,7 @@ export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, res
   const [progress, setProgress] = useState<{ label: string; fraction: number | null } | null>(null);
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const [needsPassword, setNeedsPassword] = useState(false);
+  const [needsModel, setNeedsModel] = useState<ModelPackId | null>(null);
   const [saved, setSaved] = useState<Set<string>>(() => new Set());
   const abort = useRef<AbortController | null>(null);
   const unlocked = useSyncExternalStore((fn) => vault.subscribe(fn), () => vault.unlocked);
@@ -132,6 +134,7 @@ export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, res
     setOptions(Object.fromEntries(groups.map((g) => [g.tool.id, withDefaults(g.tool, {})])));
     setOutcomes([]);
     setNeedsPassword(false);
+    setNeedsModel(null);
     return () => abort.current?.abort();
   }, [toolKey]);
 
@@ -150,6 +153,7 @@ export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, res
     setOutcomes([]);
     setSaved(new Set());
     setNeedsPassword(false);
+    setNeedsModel(null);
     const results: Outcome[] = [];
     for (const [n, { tool, job }] of all.entries()) {
       const label = job.map((f) => f.name).join(" + ");
@@ -174,6 +178,12 @@ export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, res
       } catch (e) {
         const err = e instanceof EngineError ? e : new EngineError("internal", String(e));
         if (err.message === "cancelled") break;
+        // Ask for the model, and run everything again once it is here.
+        if (err.code === "model_missing" && err.pack && isModelPackId(err.pack)) {
+          setNeedsModel(err.pack);
+          results.length = 0;
+          break;
+        }
         if (err.code === "password_required" || err.code === "wrong_password") setNeedsPassword(true);
         results.push({ toolId: tool.id, input: label, inputs: job.map((f) => f.key), files: [], report: null, error: { code: err.code, message: err.message } });
       }
@@ -239,6 +249,16 @@ export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, res
             </fieldset>
           );
         })}
+        {needsModel ? (
+          <ModelPrompt
+            pack={needsModel}
+            onReady={() => {
+              setNeedsModel(null);
+              void run();
+            }}
+            onCancel={() => setNeedsModel(null)}
+          />
+        ) : null}
         <div className="actions">
           {running ? (
             <button type="button" className="secondary" onClick={() => abort.current?.abort()}>

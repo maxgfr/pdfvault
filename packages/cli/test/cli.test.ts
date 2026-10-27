@@ -168,6 +168,43 @@ describe("running", () => {
   });
 });
 
+describe("OCR models", () => {
+  const ocrFiles = ["ppocrv6-small-det.onnx", "ppocrv6-small-rec.onnx", "ppocrv6-small-rec.yml"];
+
+  test("a missing model is an error that says how to get it, never a silent download", () => {
+    const env = { PDFVAULT_MODELS: join(dir, "no-models") };
+    const list = JSON.parse(cli(["models", "list", "--json"], undefined, env).out);
+    expect(list.models).toContainEqual(expect.objectContaining({ id: "paddle", installed: false }));
+    const r = cli(["ocr", "photo.pdf", "--json"], undefined, env);
+    expect(r.code).toBe(1);
+    const error = JSON.parse(r.out).results[0].error;
+    expect(error.code).toBe("model_missing");
+    expect(error.message).toContain("pdfvault models pull paddle");
+  });
+
+  test("OCR reads the model folder, and rm deletes it", async () => {
+    const models = join(dir, "models");
+    for (const f of ocrFiles) await cp(`${root}models/${f}`, join(models, f));
+    const env = { PDFVAULT_MODELS: models };
+    expect(JSON.parse(cli(["models", "--json"], undefined, env).out).models[0]).toMatchObject({ id: "paddle", installed: true });
+    const r = cli(["ocr", "photo.pdf", "--json", "-o", "photo-ocr.pdf"], undefined, env);
+    expect(r.code).toBe(0);
+    const rm = cli(["models", "rm", "paddle"], undefined, env);
+    expect(rm.code).toBe(0);
+    expect(rm.err).toContain("paddle: deleted, 31 MB freed");
+    for (const f of ocrFiles) expect(await Bun.file(join(models, f)).exists()).toBe(false);
+    expect(cli(["models", "rm", "--all"], undefined, env).err).toContain("paddle: not downloaded");
+  }, 60_000);
+
+  test("models usage errors exit 2", () => {
+    expect(cli(["models", "pull"]).code).toBe(2);
+    expect(cli(["models", "pull", "nope"]).code).toBe(2);
+    expect(cli(["models", "rm"]).code).toBe(2);
+    expect(cli(["models", "frobnicate"]).code).toBe(2);
+    expect(cli(["models", "--help"]).out).toContain("pdfvault models pull");
+  });
+});
+
 describe("agent skill", () => {
   test("prints the skill that ships with this version", async () => {
     const r = cli(["skill"]);

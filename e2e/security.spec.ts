@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { runTool, siteURL, watch } from "./helpers.ts";
+import { fixture, runTool, siteURL, watch } from "./helpers.ts";
 
 test("the page sets a strict CSP and no referrer", async ({ page }) => {
   await page.goto("./");
@@ -63,4 +63,40 @@ test("works offline after the first visit", async ({ page, context }) => {
   await runTool(page, "compress", "Compress PDF", [["photo.pdf"]]);
   await runTool(page, "pdf2img", "PDF to images", [["text-3.pdf"]], { Resolution: "40" });
   await context.setOffline(false);
+});
+
+test("the OCR model is downloaded only when asked, works offline, and can be deleted", async ({ page, context }) => {
+  const models: string[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes("/models/")) models.push(r.url());
+  });
+  await page.goto("./");
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.goto("./#/ocr");
+  await page.locator('input[type="file"]').first().setInputFiles(fixture("scan.pdf"));
+  await page.getByRole("button", { name: "OCR (searchable PDF)", exact: true }).click();
+  const prompt = page.getByRole("alert").filter({ hasText: "31 MB" });
+  await expect(prompt).toBeVisible({ timeout: 60_000 });
+  expect(models, "nothing downloaded before the user agrees").toEqual([]);
+  await prompt.getByRole("button", { name: "Not now" }).click();
+  await expect(prompt).toBeHidden();
+  expect(models).toEqual([]);
+
+  // Agreeing downloads it once; then OCR runs offline.
+  await runTool(page, "ocr", "OCR (searchable PDF)", [["scan.pdf"]], { Pages: "1" });
+  expect(models.length).toBe(3);
+  await context.setOffline(true);
+  await page.reload();
+  await runTool(page, "ocr", "OCR (searchable PDF)", [["scan.pdf"]], { Pages: "1" });
+  await context.setOffline(false);
+  expect(models.length).toBe(3);
+
+  // The Privacy page deletes it, and the next OCR asks again.
+  await page.goto("./#/privacy");
+  await page.getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByText("Not downloaded")).toBeVisible();
+  await page.goto("./#/ocr");
+  await page.locator('input[type="file"]').first().setInputFiles(fixture("scan.pdf"));
+  await page.getByRole("button", { name: "OCR (searchable PDF)", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Download and continue" })).toBeVisible({ timeout: 60_000 });
 });

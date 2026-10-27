@@ -1,5 +1,5 @@
-// Standalone pdfvault executables (Bun runtime + CLI bundle + wasm + OCR
-// models), named like the rest of maxgfr/homebrew-tap: pdfvault-<os>-<arch>.
+// Standalone pdfvault executables (Bun runtime + CLI bundle + wasm + fonts;
+// OCR models download on first use), named like the rest of maxgfr/homebrew-tap: pdfvault-<os>-<arch>.
 //
 //   bun scripts/cli-binaries.ts [--version 1.2.3] [target...]
 //   targets: macos-arm64 macos-x64 linux-arm64 linux-x64 windows-x64 windows-arm64

@@ -3,12 +3,16 @@ import initOcr, * as ocr from "../wasm/ocr/ocr.js";
 import initRender, * as render from "../wasm/render/render.js";
 import { EngineError, toEngineError } from "./errors.ts";
 import { BUNDLED_FONTS, type FontFile, type FontKey } from "./fonts.ts";
+import type { ModelName } from "./models.ts";
 
 export type ModuleName = "core" | "render" | "ocr";
-export type ModelName = "text-detection.rten" | "text-recognition.rten";
 export type WasmSource = BufferSource | WebAssembly.Module | Response;
 
-/** Where the engine gets its binaries: files under Bun, same-origin fetches in the browser. */
+/**
+ * Where the engine gets its binaries: files under Bun, same-origin fetches in
+ * the browser. `model` throws a `model_missing` EngineError for a model that
+ * has not been downloaded.
+ */
 export interface Loader {
   wasm(name: ModuleName): Promise<WasmSource>;
   model(name: ModelName): Promise<Uint8Array>;
@@ -64,12 +68,13 @@ export class Engine {
     this.#ready[name] ??= (async () => {
       await init({ module_or_path: await this.#loader.wasm(name) });
       if (name === "ocr") {
-        const [det, rec] = await Promise.all([
-          this.#loader.model("text-detection.rten"),
-          this.#loader.model("text-recognition.rten"),
+        const [det, rec, config] = await Promise.all([
+          this.#loader.model("ppocrv6-small-det.onnx"),
+          this.#loader.model("ppocrv6-small-rec.onnx"),
+          this.#loader.model("ppocrv6-small-rec.yml"),
         ]);
         try {
-          ocr.init(det, rec);
+          ocr.init(det, rec, new TextDecoder().decode(config));
         } catch (e) {
           throw toEngineError(e);
         }

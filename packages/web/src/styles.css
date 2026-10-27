@@ -590,6 +590,20 @@ details summary {
 .locked .field {
   flex: 1;
 }
+/* Asking before an OCR model download. */
+.model-prompt {
+  margin: 16px 0 0;
+}
+.model-prompt > .ico {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.model-prompt p {
+  margin: 0;
+}
+.model-prompt .actions {
+  margin-top: 12px;
+}
 
 .actions {
   display: flex;

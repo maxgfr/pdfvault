@@ -896,7 +896,7 @@ export const tools: Tool[] = [
   {
     id: "ocr",
     title: "OCR (searchable PDF)",
-    summary: "Recognize text on scanned pages and add an invisible, selectable text layer. Latin script.",
+    summary: "Recognize text on scanned pages and add an invisible, selectable text layer. 50 languages.",
     category: "convert",
     input: "pdf",
     heavy: "ocr",

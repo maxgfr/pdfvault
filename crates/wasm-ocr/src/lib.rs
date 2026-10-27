@@ -1,5 +1,6 @@
 //! wasm-bindgen façade over [`pdfvault_ocr::Ocr`]. `init` loads the models
-//! once per instance; `recognize` returns lines of words as JSON.
+//! and the recognizer's config once per instance; `recognize` returns lines
+//! of words as JSON.
 
 use pdfvault_ocr::Ocr;
 use std::cell::RefCell;
@@ -18,8 +19,8 @@ fn err(code: &str, msg: &str) -> JsError {
 }
 
 #[wasm_bindgen]
-pub fn init(detection: Vec<u8>, recognition: Vec<u8>) -> Result<(), JsError> {
-    let ocr = Ocr::new(detection, recognition).map_err(|e| err("ocr_model", &e))?;
+pub fn init(detection: Vec<u8>, recognition: Vec<u8>, config: &str) -> Result<(), JsError> {
+    let ocr = Ocr::new(detection, recognition, config).map_err(|e| err("ocr_model", &e))?;
     ENGINE.with(|e| *e.borrow_mut() = Some(ocr));
     Ok(())
 }
