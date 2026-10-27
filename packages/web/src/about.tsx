@@ -63,7 +63,7 @@ export function About() {
       <p>
         Text recognition (OCR) needs a model that is not part of the app. The first time a tool needs it, pdfvault asks
         before downloading it from this site; it is checked against a fixed checksum and kept here, so OCR works offline
-        afterwards. GLM-OCR, an optional, much larger model for Markdown with tables and formulas, comes from Hugging Face
+        afterwards. GLM-OCR, an optional, much larger model that reads harder pages and writes formulas as LaTeX, comes from Hugging Face
         the same way, and runs on your graphics card (WebGPU). Delete them whenever you like: each is downloaded again,
         after asking, the next time.
       </p>

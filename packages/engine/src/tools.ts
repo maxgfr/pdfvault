@@ -169,9 +169,9 @@ const engineField: Field = {
   default: "paddle",
   choices: [
     { value: "paddle", label: "PP-OCRv6 · fast" },
-    { value: "glm", label: "GLM-OCR · tables and formulas, slow" },
+    { value: "glm", label: "GLM-OCR · formulas, harder pages, slow" },
   ],
-  help: "GLM-OCR writes tables and formulas as Markdown, but it is a much larger model (a one-time download of several hundred MB) and takes about a minute per page. It gives no word positions, so OCR (searchable PDF) and Scan always use PP-OCRv6.",
+  help: "GLM-OCR reads a whole page at once and writes formulas as LaTeX; tables come out as plain lines. It is a much larger model (a one-time download of about 750 MB) and takes about a minute per page. It gives no word positions, so OCR (searchable PDF) and Scan always use PP-OCRv6.",
   when: { field: "ocr", is: [true] },
 };
 

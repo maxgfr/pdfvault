@@ -116,7 +116,7 @@ test("GLM-OCR is offered for text outputs and asks before anything goes to Huggi
   await page.locator('input[type="file"]').first().setInputFiles(fixture("scan.pdf"));
   const engine = page.getByLabel("Text recognition", { exact: true });
   await expect(engine).toHaveValue("paddle");
-  await expect(engine.locator("option")).toHaveText(["PP-OCRv6 · fast", "GLM-OCR · tables and formulas, slow"]);
+  await expect(engine.locator("option")).toHaveText(["PP-OCRv6 · fast", "GLM-OCR · formulas, harder pages, slow"]);
   // Only with OCR on.
   await page.getByLabel("OCR pages without text", { exact: true }).uncheck();
   await expect(engine).toBeHidden();

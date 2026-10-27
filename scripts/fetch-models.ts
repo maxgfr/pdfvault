@@ -3,7 +3,7 @@
 // 1.1, metric-compatible with Arial, Times New Roman and Courier New) into
 // models/fonts/ for text the editor writes. The site and the CLI ship the
 // fonts; the site serves the models for users to download on first OCR, and
-// the tests read them from here. GLM-OCR (several hundred MB) is not fetched:
+// the tests read them from here. GLM-OCR (about 750 MB) is not fetched:
 // the site downloads it from Hugging Face, and only when a user asks.
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

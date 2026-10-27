@@ -61,7 +61,7 @@ export const MODEL_PACKS = {
   // Too large to serve from GitHub Pages: the site fetches it from Hugging Face.
   glm: {
     id: "glm",
-    title: "GLM-OCR (Markdown, tables, formulas)",
+    title: "GLM-OCR (whole-page Markdown, formulas)",
     license: "MIT, Z.ai",
     webSource: "upstream",
     files: [
