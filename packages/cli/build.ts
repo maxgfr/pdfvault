@@ -1,4 +1,4 @@
-// Build the CLI's npm bundle: dist/pdfvault.js plus its wasm and models, run
+// Build the CLI's npm bundle: dist/pdfvault.js plus its wasm and fonts, run
 // with bun or bunx. Standalone executables: scripts/cli-binaries.ts.
 import { chmod, rm } from "node:fs/promises";
 

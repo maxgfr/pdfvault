@@ -1,17 +1,13 @@
-// Download the binary assets the engine ships, pinned by SHA-256: the ocrs
-// models (CC-BY-SA 4.0, Robert Knight) into models/, and the Liberation
-// fonts (SIL OFL 1.1, metric-compatible with Arial, Times New Roman and
-// Courier New) into models/fonts/ for text the editor writes. The site and
-// the CLI ship these exact files; nothing is fetched at run time.
+// Download the binary assets, pinned by SHA-256: the PP-OCRv6 models
+// (Apache-2.0, PaddlePaddle) into models/, and the Liberation fonts (SIL OFL
+// 1.1, metric-compatible with Arial, Times New Roman and Courier New) into
+// models/fonts/ for text the editor writes. The site and the CLI ship the
+// fonts; the site serves the models for users to download on first OCR, and
+// the tests read them from here.
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-const MODELS = {
-  "text-detection.rten": "f15cfb56bd02c4bf478a20343986504a1f01e1665c2b3a0ad66340f054b1b5ca",
-  "text-recognition.rten": "e484866d4cce403175bd8d00b128feb08ab42e208de30e42cd9889d8f1735a6e",
-} as const;
-const BASE = "https://ocrs-models.s3-accelerate.amazonaws.com";
+import { MODEL_PACKS } from "../packages/engine/src/models.ts";
 
 const FONTS_ARCHIVE = {
   url: "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
@@ -56,12 +52,12 @@ async function download(url: string, expected: string, label: string): Promise<A
 }
 
 await mkdir(fontDir, { recursive: true });
-for (const [name, expected] of Object.entries(MODELS)) {
+for (const { name, url, sha256: expected } of Object.values(MODEL_PACKS).flatMap((p) => p.files)) {
   if (await intact(dir + name, expected)) {
     console.log(`${name}: ok`);
     continue;
   }
-  await Bun.write(dir + name, await download(`${BASE}/${name}`, expected, name));
+  await Bun.write(dir + name, await download(url, expected, name));
   console.log(`${name}: downloaded`);
 }
 

@@ -64,7 +64,7 @@ export async function runJob(
         resolve({ files: m.files, report: m.report });
       } else {
         finish();
-        reject(new EngineError(m.code as EngineError["code"], m.message));
+        reject(new EngineError(m.code as EngineError["code"], m.message, m.pack));
       }
     };
     worker.onerror = (e) => {

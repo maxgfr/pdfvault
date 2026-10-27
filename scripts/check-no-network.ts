@@ -16,6 +16,10 @@ const ALLOWED_HOSTS: [string, string][] = [
   ["www.idpf.org", "EPUB XML namespace, a string written into generated books"],
   ["purl.org", "Dublin Core namespace, a string written into generated books"],
   ["ns.adobe.com", "XMP namespace strings inside the PDF engine"],
+  [
+    "huggingface.co",
+    "upstream source of each OCR model in the shared catalog (models.ts), which the CLI downloads from; the site downloads the same pinned files from its own origin, and its CSP (connect-src 'self') would block this host",
+  ],
 ];
 
 const URL_RE = /\bhttps?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi;

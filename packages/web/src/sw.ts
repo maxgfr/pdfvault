@@ -1,7 +1,8 @@
 /// <reference lib="webworker" />
 // Offline support. The build replaces __MANIFEST__ with the hashed list of
-// files: the app shell is cached at install; the page renderer and the OCR
-// models are cached the first time a tool needs them.
+// files: the app shell is cached at install; the page renderer and the fonts
+// are cached the first time a tool needs them. OCR models are not handled
+// here: the page downloads them on request into their own cache (models.ts).
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 declare const __MANIFEST__: { version: string; precache: string[]; lazy: string[] };
@@ -13,6 +14,9 @@ const abs = (p: string) => new URL(p, scope).href;
 const lazySet = new Set(lazy.map(abs));
 // Files shared to the app wait here until the page takes them (scan/session.ts).
 const INBOX = "pdfvault-inbox";
+// Downloaded OCR models (models.ts MODEL_CACHE): pinned files that outlive
+// app updates, deleted only by the user.
+const MODELS = "pdfvault-models";
 const SHARE_TARGET = abs("./share-target");
 
 sw.addEventListener("install", (event: ExtendableEvent) => {
@@ -28,7 +32,7 @@ sw.addEventListener("activate", (event: ExtendableEvent) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k.startsWith("pdfvault-") && k !== CACHE && k !== INBOX).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith("pdfvault-") && k !== CACHE && k !== INBOX && k !== MODELS).map((k) => caches.delete(k))))
       .then(() => sw.clients.claim()),
   );
 });

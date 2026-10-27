@@ -1,6 +1,8 @@
+import { EngineError, isModelPackId, type ModelPackId } from "@pdfvault/engine";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ShareButton, download } from "../action-panel.tsx";
 import { Icon } from "../icons.tsx";
+import { ModelPrompt } from "../model-prompt.tsx";
 import { bytes as size } from "../reports.tsx";
 import { runJob } from "../runner.ts";
 import { vault } from "../vault.ts";
@@ -37,6 +39,7 @@ export function ScanPage() {
   const [problems, setProblems] = useState<string[]>([]);
   const [progress, setProgress] = useState<{ label: string; fraction: number | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [needsModel, setNeedsModel] = useState<ModelPackId | null>(null);
   const [made, setMade] = useState<Made | null>(null);
   const [saved, setSaved] = useState(false);
   const abort = useRef<AbortController | null>(null);
@@ -71,6 +74,7 @@ export function ScanPage() {
 
   const make = async () => {
     setError(null);
+    setNeedsModel(null);
     setMade(null);
     setSaved(false);
     const ctrl = new AbortController();
@@ -89,7 +93,8 @@ export function ScanPage() {
       const [file] = workspace.add([{ name, bytes, unsaved: true }]);
       setMade({ key: file!.key, name, bytes });
     } catch (e) {
-      if (!ctrl.signal.aborted) setError(e instanceof Error ? e.message : String(e));
+      if (e instanceof EngineError && e.code === "model_missing" && e.pack && isModelPackId(e.pack)) setNeedsModel(e.pack);
+      else if (!ctrl.signal.aborted) setError(e instanceof Error ? e.message : String(e));
     } finally {
       setProgress(null);
       abort.current = null;
@@ -227,7 +232,7 @@ export function ScanPage() {
                   <label className="check" htmlFor="scan-ocr">
                     <input id="scan-ocr" type="checkbox" checked={ocr} onChange={(e) => setOcr(e.currentTarget.checked)} />
                     <span>Make the text searchable (OCR)</span>
-                    <small className="hint">Slower; Latin script.</small>
+                    <small className="hint">Slower; 50 languages.</small>
                   </label>
                 </div>
                 <div className="actions">
@@ -251,6 +256,16 @@ export function ScanPage() {
                 </div>
               ) : null}
               {error ? <p className="error-text" role="alert">{error}</p> : null}
+              {needsModel ? (
+                <ModelPrompt
+                  pack={needsModel}
+                  onReady={() => {
+                    setNeedsModel(null);
+                    void make();
+                  }}
+                  onCancel={() => setNeedsModel(null)}
+                />
+              ) : null}
 
               {made ? (
                 <section className="results" aria-label="Result">

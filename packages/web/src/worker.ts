@@ -2,6 +2,7 @@
 // One worker per job: the page stays responsive, and terminating the worker
 // returns every byte of wasm memory to the browser.
 import { Engine, EngineError, previewPages, toolById, withDefaults, type EditOps, type Loader, type ModuleName, type Options } from "@pdfvault/engine";
+import { readModel } from "./models.ts";
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -20,7 +21,7 @@ export type JobMessage =
   | { type: "progress"; done: number; total: number; label: string }
   | { type: "loading"; module: ModuleName }
   | { type: "done"; files: { suffix: string; ext: string; bytes: Uint8Array }[]; report: unknown }
-  | { type: "error"; code: string; message: string };
+  | { type: "error"; code: string; message: string; pack?: string };
 
 const post = (m: JobMessage, transfer: Transferable[] = []) => self.postMessage(m, transfer);
 
@@ -34,11 +35,8 @@ self.onmessage = async (event: MessageEvent<JobRequest>) => {
       post({ type: "loading", module: name });
       return fetch(new URL(`./wasm/${name}.wasm`, self.location.href));
     },
-    async model(name) {
-      const res = await fetch(new URL(`./models/${name}`, self.location.href));
-      if (!res.ok) throw new EngineError("ocr_model", `could not load ${name} (${res.status})`);
-      return new Uint8Array(await res.arrayBuffer());
-    },
+    // Only what the user downloaded: a job never fetches a model by itself.
+    model: readModel,
     async font(name) {
       const res = await fetch(new URL(`./fonts/${name}`, self.location.href));
       if (!res.ok) throw new EngineError("internal", `could not load ${name} (${res.status})`);
@@ -73,6 +71,6 @@ self.onmessage = async (event: MessageEvent<JobRequest>) => {
     );
   } catch (e) {
     const err = e instanceof EngineError ? e : new EngineError("internal", e instanceof Error ? e.message : String(e));
-    post({ type: "error", code: err.code, message: err.message });
+    post({ type: "error", code: err.code, message: err.message, pack: err.pack });
   }
 };

@@ -10,15 +10,20 @@ export type ErrorCode =
   | "missing_glyphs"
   | "ocr"
   | "ocr_model"
+  /** The OCR model is not on this device yet: download it (`pdfvault models pull`), then run again. */
+  | "model_missing"
   | "ocr_not_ready"
   | "internal";
 
 export class EngineError extends Error {
   readonly code: ErrorCode;
-  constructor(code: ErrorCode, message: string) {
+  /** With `model_missing`: the model pack to download. */
+  readonly pack?: string;
+  constructor(code: ErrorCode, message: string, pack?: string) {
     super(message);
     this.name = "EngineError";
     this.code = code;
+    if (pack) this.pack = pack;
   }
 }
 
