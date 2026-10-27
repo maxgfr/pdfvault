@@ -856,6 +856,7 @@ dependencies = [
 name = "pdfvault-ocr"
 version = "0.1.0"
 dependencies = [
+ "image",
  "pdfvault-core",
  "pdfvault-render",
  "rten",

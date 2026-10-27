@@ -13,5 +13,6 @@ rten-tensor.workspace = true
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
+image = { version = "0.25", default-features = false }
 pdfvault-core = { workspace = true, features = ["fixtures"] }
 pdfvault-render.workspace = true
