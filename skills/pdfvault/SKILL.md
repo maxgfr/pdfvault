@@ -38,9 +38,11 @@ Keep only the final file: delete the outputs of earlier rungs. Report the before
 
 ## Other tools
 
-Each command's `--help` is authoritative. The common ones: `merge a.pdf b.pdf -o all.pdf`; `combine scan.pdf photo.jpg receipt.png -o all.pdf` (PDFs and images in the given order, each image a page); `scan page1.jpg page2.jpg -o doc.pdf` (photos of paper: finds the sheet, straightens it, evens out the light; `--filter color|gray|bw|original`, `--ocr`, and `--corners '[{"corners":[[x,y],…4 points TL,TR,BR,BL],"rotate":90}]'` when detection misses; its `--json` report gives the corners it used); `split --every 1` or `--mode ranges --ranges 1-3,4-` or `--mode bookmarks`; `extract --pages 2-5`; `delete --pages 1`; `reorder --order 3,1,2`; `rotate --angle 90 --pages 2`; `encrypt --user-password …` (AES-256); `decrypt --password …`; `ocr scan.pdf` (adds an invisible text layer; pages that already have text are skipped unless `--force`); `to-md`, `to-text`, `to-epub` (OCR on pages without text); `img compress|resize|convert|strip`.
+Each command's `--help` is authoritative. The common ones: `merge a.pdf b.pdf -o all.pdf`; `combine scan.pdf photo.jpg receipt.png -o all.pdf` (PDFs and images in the given order, each image a page); `scan page1.jpg page2.jpg -o doc.pdf` (photos of paper: finds the sheet, straightens it, evens out the light; `--filter color|gray|bw|original`, `--ocr`, and `--corners '[{"corners":[[x,y],…4 points TL,TR,BR,BL],"rotate":90}]'` when detection misses; its `--json` report gives the corners it used); `split --every 1` or `--mode ranges --ranges 1-3,4-` or `--mode bookmarks`; `extract --pages 2-5`; `delete --pages 1`; `reorder --order 3,1,2`; `rotate --angle 90 --pages 2`; `encrypt --user-password …` (AES-256); `decrypt --password …`; `ocr scan.pdf` (adds an invisible text layer; pages that already have text are skipped unless `--force`); `to-md`, `to-text`, `to-epub` (OCR on pages without text; `--engine glm` reads those pages with GLM-OCR instead, see below); `img compress|resize|convert|strip`.
 
 OCR needs a model the CLI does not ship (PP-OCRv6 small, 31 MB). Without a terminal, a command that needs it fails with error code `model_missing`; do not work around that silently. Tell the user it is a one-time download, then pass `--download` (or run `pdfvault models pull paddle`). `pdfvault models` shows what is installed; `pdfvault models rm paddle` (or `rm --all`) deletes it, for example right after a one-off job when the user wants nothing left behind.
+
+GLM-OCR is an optional, slower engine for scanned pages with tables or formulas: `pdfvault to-md scan.pdf --engine glm` writes those pages as GLM-OCR's Markdown (tables, LaTeX formulas). It only exists for `to-md`, `to-text` and `to-epub`: it gives no word positions, so `ocr` and `scan --ocr` always use PP-OCRv6. It is an 859 MB one-time download (the model plus its runtime, Transformers.js and ONNX Runtime, installed with Bun into the model folder) and runs on the CPU at about a minute per page, with several GB of memory. Use it only when the user asks for it or the default OCR mangles tables; ask before downloading (`--download` or `pdfvault models pull glm`), and `pdfvault models rm glm` deletes the model and its runtime.
 
 ## Edit a PDF
 
@@ -76,6 +78,7 @@ OCR needs a model the CLI does not ship (PP-OCRv6 small, 31 MB). Without a termi
 ## Limits
 
 - OCR reads 50 languages (Latin scripts with accents, Chinese, Japanese) in horizontal lines; not vertical text.
+- GLM-OCR (`--engine glm`) is slow on a CPU (about a minute per scanned page) and writes Markdown only: no searchable PDF.
 - `extreme` rasterizes pages: no selectable text afterwards. Run `ocr` on the result when the user needs it searchable.
 - Fonts are not subset, so text-only PDFs shrink little.
 - `sign` places an image; it is not a cryptographic signature.

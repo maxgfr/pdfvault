@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { EngineError, missingCharacters, toolById, tools, withDefaults, type EditOps, type Options, type RunResult, type TextRun } from "../src/index.ts";
+import { Engine, EngineError, missingCharacters, toolById, tools, withDefaults, type EditOps, type Options, type RunResult, type TextRun } from "../src/index.ts";
 import type { CompressReport } from "../src/reports.ts";
-import { engine, fixture } from "./loader.ts";
+import { bunLoader, engine, fixture } from "./loader.ts";
 
-async function run(id: string, inputs: Uint8Array[], options: Options = {}): Promise<RunResult> {
+async function run(id: string, inputs: Uint8Array[], options: Options = {}, using = engine): Promise<RunResult> {
   const tool = toolById.get(id);
   if (!tool) throw new Error(`no tool ${id}`);
-  return tool.run(engine, inputs, withDefaults(tool, options));
+  return tool.run(using, inputs, withDefaults(tool, options));
 }
 
 async function pages(pdf: Uint8Array, password?: string): Promise<number> {
@@ -334,6 +334,57 @@ describe("text and OCR", () => {
     expect(r.report).toMatchObject({ ocrPages: [1, 2, 3] });
     expect(new TextDecoder().decode(r.files[0]!.bytes)).toContain("Page 2");
   }, 120_000);
+  test("the text outputs offer GLM-OCR when OCR is on; the PDF outputs do not", () => {
+    for (const id of ["to-md", "to-text", "to-epub"]) {
+      const field = toolById.get(id)!.fields.find((f) => f.name === "engine");
+      expect(field).toMatchObject({ kind: "select", default: "paddle", when: { field: "ocr", is: [true] } });
+      expect(field?.kind === "select" && field.choices.map((c) => c.value)).toEqual(["paddle", "glm"]);
+    }
+    for (const id of ["ocr", "scan"]) expect(toolById.get(id)!.fields.some((f) => f.name === "engine")).toBe(false);
+  });
+
+  // A stand-in for GLM-OCR: no 700 MB download in tests.
+  const glmPage = "# Report\n\n| Item | Total |\n| --- | --- |\n| **Tea** | 4.50 |\n\n$$E = mc^2$$";
+  const fakeGlm = (seen: { width: number; height: number }[]) =>
+    new Engine({
+      ...bunLoader,
+      glm: async () => ({
+        recognize: async (_rgba: Uint8Array, width: number, height: number) => {
+          seen.push({ width, height });
+          return glmPage;
+        },
+      }),
+    });
+
+  test("with GLM-OCR, scanned pages come back as its Markdown, verbatim", async () => {
+    const seen: { width: number; height: number }[] = [];
+    const scan = await fixture("scan.pdf");
+    const r = await run("to-md", [scan], { engine: "glm" }, fakeGlm(seen));
+    expect(r.report).toMatchObject({ ocrPages: [1, 2, 3] });
+    expect(new TextDecoder().decode(r.files[0]!.bytes)).toBe(`${glmPage}\n\n${glmPage}\n\n${glmPage}\n`);
+    // Pages are rendered small enough for GLM-OCR's vision encoder.
+    expect(seen.length).toBe(3);
+    for (const s of seen) expect(s.width * s.height).toBeLessThanOrEqual(1_000_000);
+    const text = new TextDecoder().decode((await run("to-text", [scan], { engine: "glm" }, fakeGlm([]))).files[0]!.bytes);
+    expect(text).toStartWith("Report\n\nItem  Total\nTea  4.50\n");
+    // Pages that have text keep the usual extraction, GLM-OCR or not.
+    const typed = new TextDecoder().decode((await run("to-md", [await fixture("text-3.pdf")], { engine: "glm" }, fakeGlm(seen))).files[0]!.bytes);
+    expect(typed).toContain("quick brown fox");
+    expect(seen.length).toBe(3);
+  }, 60_000);
+
+  test("GLM-OCR not downloaded is model_missing for the glm pack; no loader is unsupported", async () => {
+    const missing = new Engine({
+      ...bunLoader,
+      glm: async () => {
+        throw new EngineError("model_missing", "GLM-OCR is not downloaded", "glm");
+      },
+    });
+    const err = await run("to-md", [await fixture("scan.pdf")], { engine: "glm" }, missing).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EngineError);
+    expect(err).toMatchObject({ code: "model_missing", pack: "glm" });
+    expect(await run("to-text", [await fixture("scan.pdf")], { engine: "glm" }).catch((e: EngineError) => e.code)).toBe("unsupported");
+  }, 60_000);
 });
 
 describe("scan", () => {

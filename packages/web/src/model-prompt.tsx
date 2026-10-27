@@ -1,4 +1,4 @@
-import { MODEL_PACKS, megabytes, packBytes, type ModelPackId } from "@pdfvault/engine";
+import { MODEL_PACKS, megabytes, packBytes, webHost, type ModelPackId } from "@pdfvault/engine";
 import { useState } from "react";
 import { Icon } from "./icons.tsx";
 import { downloadPack } from "./models.ts";
@@ -15,6 +15,7 @@ export function ModelPrompt({ pack, onReady, onCancel }: Props) {
   const [fraction, setFraction] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const model = MODEL_PACKS[pack];
+  const host = webHost(pack);
   const start = async () => {
     setError(null);
     setFraction(0);
@@ -31,8 +32,9 @@ export function ModelPrompt({ pack, onReady, onCancel }: Props) {
       <Icon name="download" />
       <div>
         <p>
-          Text recognition needs <strong>{model.title}</strong>: a one-time {megabytes(packBytes(pack))} download from this
-          site, kept on this device so OCR also works offline. Delete it any time from <a href="#/privacy">Privacy</a>.
+          Text recognition needs <strong>{model.title}</strong>: a one-time {megabytes(packBytes(pack))} download from{" "}
+          {host ? <strong>{host}</strong> : "this site"}, kept on this device so OCR also works offline. Your files are not
+          sent anywhere. Delete it any time from <a href="#/privacy">Privacy</a>.
         </p>
         {fraction !== null ? (
           <div className="progress" role="status" aria-live="polite">

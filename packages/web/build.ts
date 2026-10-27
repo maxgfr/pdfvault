@@ -3,8 +3,8 @@
 // `--serve` then serves dist/ under /pdfvault/ like GitHub Pages does.
 import { createHash } from "node:crypto";
 import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
-import { join, relative } from "node:path";
-import { MODEL_PACKS } from "../engine/src/models.ts";
+import { dirname, join, relative } from "node:path";
+import { MODEL_PACKS, type ModelPack } from "../engine/src/models.ts";
 
 const here = new URL(".", import.meta.url).pathname;
 const root = new URL("../../", import.meta.url).pathname;
@@ -31,6 +31,7 @@ check(
     define: { "process.env.NODE_ENV": '"production"' },
   }),
 );
+// GLM-OCR (Transformers.js) is a chunk of its own, assets/glm-*.js, imported only by GLM jobs.
 check(
   await Bun.build({
     entrypoints: [`${here}src/worker.ts`],
@@ -38,9 +39,14 @@ check(
     minify: true,
     target: "browser",
     format: "esm",
-    naming: "worker.js",
+    splitting: true,
+    naming: { entry: "worker.js", chunk: "assets/[name]-[hash].[ext]", asset: "assets/[name]-[hash].[ext]" },
   }),
 );
+// ONNX Runtime's WebGPU build for GLM-OCR, served from here, never from a CDN.
+const ort = dirname(Bun.resolveSync("onnxruntime-web/webgpu", Bun.resolveSync("@huggingface/transformers", here)));
+await mkdir(`${dist}/ort`, { recursive: true });
+for (const ext of ["mjs", "wasm"]) await cp(`${ort}/ort-wasm-simd-threaded.asyncify.${ext}`, `${dist}/ort/ort-wasm-simd-threaded.asyncify.${ext}`);
 
 await cp(`${here}public`, dist, { recursive: true });
 // Links to files under public/ are added after bundling: the HTML bundler
@@ -57,9 +63,10 @@ for (const name of ["core", "render", "ocr"]) {
   await mkdir(`${dist}/wasm`, { recursive: true });
   await cp(`${root}packages/engine/wasm/${name}/${name}_bg.wasm`, `${dist}/wasm/${name}.wasm`);
 }
-// The OCR models, served for users to download when they first need OCR.
+// The OCR models served for users to download when they first need OCR (GLM-OCR comes from Hugging Face).
 await mkdir(`${dist}/models`, { recursive: true });
-for (const { name } of MODEL_PACKS.paddle.files) await cp(`${root}models/${name}`, `${dist}/models/${name}`);
+const served: ModelPack[] = Object.values(MODEL_PACKS).filter((p: ModelPack) => p.webSource === "self");
+for (const { name } of served.flatMap((p) => p.files)) await cp(`${root}models/${name}`, `${dist}/models/${name}`);
 // The fonts the editor writes and previews text with (SIL OFL 1.1, licence alongside).
 await mkdir(`${dist}/fonts`, { recursive: true });
 for (const f of await readdir(`${root}models/fonts`)) {
@@ -85,7 +92,8 @@ for await (const p of walk(dist)) {
   hash.update(rel).update(new Uint8Array(await Bun.file(p).arrayBuffer()));
 }
 files.sort();
-const lazy = files.filter((f) => f.startsWith("fonts/") || f === "wasm/render.wasm" || f === "wasm/ocr.wasm");
+// GLM-OCR's code and ONNX Runtime (tens of MB) are cached only by those who use it.
+const lazy = files.filter((f) => f.startsWith("fonts/") || /^assets\/glm-\w+\.js$/.test(f) || f.startsWith("ort/") || f === "wasm/render.wasm" || f === "wasm/ocr.wasm");
 // Models stay out of both lists: only the user's "Download" puts them on the device.
 const precache = ["./", ...files.filter((f) => f !== "index.html" && !f.startsWith("models/") && !lazy.includes(f))];
 const manifest = { version: hash.digest("hex").slice(0, 16), precache, lazy };
@@ -107,7 +115,7 @@ console.log(`site: ${files.length + 1} files, ${(total / 1048576).toFixed(1)} Mi
 
 if (serve) {
   const port = Number(process.env.PORT ?? 4173);
-  const types: Record<string, string> = { wasm: "application/wasm", webmanifest: "application/manifest+json" };
+  const types: Record<string, string> = { wasm: "application/wasm", webmanifest: "application/manifest+json", mjs: "text/javascript" };
   Bun.serve({
     port,
     async fetch(req) {
