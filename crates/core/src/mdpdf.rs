@@ -683,7 +683,8 @@ impl<'a> Writer<'a> {
 }
 
 /// Spaces a line must not break at become no-break spaces: inside numbers
-/// (`32 792,80`), before a currency or percent sign (`5 €`, `12 %`), and
+/// (`32 792,80`), before a currency or percent sign (`5 €`, `12 %`), after
+/// an approximation or comparison sign (`≈ 56 300`, `~ 8 085`), and
 /// around French guillemets and high punctuation (`« oui »`, `note :`).
 fn keep_together(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
@@ -696,7 +697,12 @@ fn keep_together(text: &str) -> String {
         let prev = i.checked_sub(1).map(|j| chars[j]);
         let next = chars.get(i + 1).copied();
         let number = matches!((prev, next), (Some(p), Some(nx)) if p.is_ascii_digit() && (nx.is_ascii_digit() || "€%$£".contains(nx)));
-        let glue = number || prev == Some('«') || matches!(next, Some('»' | ':' | ';' | '!' | '?'));
+        let sign =
+            prev.is_some_and(|p| "≈~±≤≥<>".contains(p)) && next.is_some_and(|n| n.is_ascii_digit());
+        let glue = number
+            || sign
+            || prev == Some('«')
+            || matches!(next, Some('»' | ':' | ';' | '!' | '?'));
         out.push(if glue { '\u{a0}' } else { ' ' });
     }
     out
@@ -1085,6 +1091,11 @@ mod tests {
             "payé 32\u{a0}792,80\u{a0}€ «\u{a0}oui\u{a0}»\u{a0}: 12\u{a0}%"
         );
         assert_eq!(keep_together("le 15 octobre 2011"), "le 15 octobre 2011");
+        assert_eq!(
+            keep_together("≈ 56 300 € ou ~ 12"),
+            "≈\u{a0}56\u{a0}300\u{a0}€ ou ~\u{a0}12"
+        );
+        assert_eq!(keep_together("a ~ b"), "a ~ b");
     }
 
     #[test]
