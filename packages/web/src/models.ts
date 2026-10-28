@@ -3,15 +3,21 @@
 // serve here), checked against their pinned SHA-256, and kept in a cache of
 // their own that app updates leave alone (sw.ts). About lists and deletes
 // them. Shared by the page (download, delete) and the worker (read).
-import { EngineError, MODEL_PACKS, megabytes, packBytes, packOf, sha256Hex, type ModelFile, type ModelName, type ModelPackId } from "@pdfvault/engine";
+import { MODEL_PACKS, megabytes, modelMissing, packBytes, packOf, sha256Hex, type ModelFile, type ModelName, type ModelPackId } from "@pdfvault/engine";
 
 export const MODEL_CACHE = "pdfvault-models";
 
 /** Every file is cached under this site's models/<name>, wherever it was downloaded from. */
 const url = (name: string) => new URL(`./models/${name}`, location.href).href;
 
-function missing(id: ModelPackId): EngineError {
-  return new EngineError("model_missing", `${MODEL_PACKS[id].title} is not on this device yet (${megabytes(packBytes(id))})`, id);
+const missing = (id: ModelPackId) => modelMissing(id, packBytes(id));
+
+/** Where the site downloads a pack's file from: its own origin, or the file's pinned upstream URL. */
+const source = (id: ModelPackId, f: ModelFile) => (MODEL_PACKS[id].webSource === "self" ? url(f.name) : f.url);
+
+/** The host a pack comes from, for the consent card; null for this site. */
+export function sourceHost(id: ModelPackId): string | null {
+  return MODEL_PACKS[id].webSource === "self" ? null : new URL(MODEL_PACKS[id].files[0]!.url).host;
 }
 
 /** A model file from the cache; `model_missing` when it was never downloaded (or was deleted). */
@@ -37,8 +43,8 @@ export const glmFiles = {
 
 export async function isInstalled(id: ModelPackId): Promise<boolean> {
   const cache = await caches.open(MODEL_CACHE);
-  for (const f of MODEL_PACKS[id].files) if (!(await cache.match(url(f.name)))) return false;
-  return true;
+  const hits = await Promise.all(MODEL_PACKS[id].files.map((f: ModelFile) => cache.match(url(f.name))));
+  return hits.every(Boolean);
 }
 
 /** `model_missing` unless every file of the pack is on this device. */
@@ -51,7 +57,6 @@ export async function downloadPack(id: ModelPackId, onProgress?: (fraction: numb
   // Ask the browser not to evict the models under storage pressure.
   await navigator.storage?.persist?.().catch(() => false);
   const cache = await caches.open(MODEL_CACHE);
-  const pack = MODEL_PACKS[id];
   const total = packBytes(id);
   // Private windows, for one, keep little: say so before downloading hundreds of MB.
   const room = await navigator.storage?.estimate?.().catch(() => undefined);
@@ -59,27 +64,35 @@ export async function downloadPack(id: ModelPackId, onProgress?: (fraction: numb
     throw new Error(`this browser only lets the site keep ${megabytes(room.quota - (room.usage ?? 0))} more, and the model needs ${megabytes(total)}; a private window has less room than a normal one`);
   }
   let done = 0;
-  for (const f of pack.files as readonly ModelFile[]) {
+  let shown = -1;
+  // Once per percent, not once per network chunk (tens of thousands for GLM-OCR).
+  const report = () => {
+    const percent = Math.floor((done / total) * 100);
+    if (percent !== shown) onProgress?.((shown = percent) / 100);
+  };
+  for (const f of MODEL_PACKS[id].files as readonly ModelFile[]) {
     if (await cache.match(url(f.name))) {
       done += f.bytes;
       continue;
     }
-    const res = await fetch(pack.webSource === "self" ? url(f.name) : f.url, { cache: "no-store" });
+    const res = await fetch(source(id, f), { cache: "no-store" });
     if (!res.ok || !res.body) throw new Error(`could not download ${f.name} (${res.status})`);
-    const chunks: Uint8Array[] = [];
+    // Straight into one buffer of the pinned size: GLM-OCR's files run to
+    // hundreds of MB, and this is the only copy held for the checksum.
+    const bytes = new Uint8Array(f.bytes);
+    let at = 0;
     const reader = res.body.getReader();
     for (;;) {
       const { done: end, value } = await reader.read();
       if (end) break;
-      chunks.push(value);
+      if (at + value.length > f.bytes) throw new Error(`${f.name} is larger than expected; try again`);
+      bytes.set(value, at);
+      at += value.length;
       done += value.length;
-      onProgress?.(Math.min(done / total, 1));
+      report();
     }
-    // GLM-OCR's files run to hundreds of MB: one copy in memory for the checksum, the blob for the cache.
-    const blob = new Blob(chunks as BlobPart[]);
-    chunks.length = 0;
-    if ((await sha256Hex(new Uint8Array(await blob.arrayBuffer()))) !== f.sha256) throw new Error(`${f.name} did not match its checksum; try again`);
-    await cache.put(url(f.name), new Response(blob, { headers: { "content-type": "application/octet-stream" } })).catch((e: unknown) => {
+    if (at !== f.bytes || (await sha256Hex(bytes)) !== f.sha256) throw new Error(`${f.name} did not match its checksum; try again`);
+    await cache.put(url(f.name), new Response(bytes, { headers: { "content-type": "application/octet-stream" } })).catch((e: unknown) => {
       throw new Error(`could not keep ${f.name} on this device (${e instanceof Error ? e.message : String(e)}); is the disk full?`);
     });
   }
@@ -88,5 +101,5 @@ export async function downloadPack(id: ModelPackId, onProgress?: (fraction: numb
 
 export async function removePack(id: ModelPackId): Promise<void> {
   const cache = await caches.open(MODEL_CACHE);
-  for (const f of MODEL_PACKS[id].files) await cache.delete(url(f.name));
+  await Promise.all(MODEL_PACKS[id].files.map((f: ModelFile) => cache.delete(url(f.name))));
 }

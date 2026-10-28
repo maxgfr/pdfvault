@@ -1,7 +1,7 @@
-import { MODEL_PACKS, megabytes, packBytes, webHost, type ModelPackId } from "@pdfvault/engine";
+import { MODEL_PACKS, megabytes, packBytes, type ModelPackId } from "@pdfvault/engine";
 import { useState } from "react";
 import { Icon } from "./icons.tsx";
-import { downloadPack } from "./models.ts";
+import { downloadPack, sourceHost } from "./models.ts";
 
 interface Props {
   pack: ModelPackId;
@@ -15,7 +15,7 @@ export function ModelPrompt({ pack, onReady, onCancel }: Props) {
   const [fraction, setFraction] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const model = MODEL_PACKS[pack];
-  const host = webHost(pack);
+  const host = sourceHost(pack);
   const start = async () => {
     setError(null);
     setFraction(0);

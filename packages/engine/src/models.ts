@@ -2,6 +2,7 @@
 // first time it is needed (after the user agrees), kept on the device, and
 // can be deleted at any time. Every file is pinned to an upstream revision
 // and accepted only with its SHA-256.
+import { EngineError } from "./errors.ts";
 
 export interface ModelFile {
   /** The name it is stored under (the site serves it as models/<name>). */
@@ -13,7 +14,6 @@ export interface ModelFile {
 }
 
 export interface ModelPack {
-  id: string;
   title: string;
   license: string;
   /**
@@ -33,7 +33,6 @@ export const GLM_DIR = "glm-ocr";
 
 export const MODEL_PACKS = {
   paddle: {
-    id: "paddle",
     title: "PP-OCRv6 small (text recognition, 50 languages)",
     license: "Apache-2.0, PaddlePaddle",
     webSource: "self",
@@ -60,7 +59,6 @@ export const MODEL_PACKS = {
   },
   // Too large to serve from GitHub Pages: the site fetches it from Hugging Face.
   glm: {
-    id: "glm",
     title: "GLM-OCR (whole-page Markdown, formulas)",
     license: "MIT, Z.ai",
     webSource: "upstream",
@@ -101,15 +99,20 @@ export function packOf(name: ModelName): ModelPackId {
   return modelPackIds.find((id) => MODEL_PACKS[id].files.some((f: ModelFile) => f.name === name))!;
 }
 
+/** The files the site serves from its own origin (models/<name>). */
+export const servedFiles: readonly ModelFile[] = Object.values(MODEL_PACKS as Record<string, ModelPack>)
+  .filter((p) => p.webSource === "self")
+  .flatMap((p) => p.files);
+
+/** The `model_missing` error for a pack: what it would download, and how to get it here. */
+export function modelMissing(id: ModelPackId, bytes: number, hint?: string): EngineError {
+  const how = hint ? `: ${hint}` : "";
+  return new EngineError("model_missing", `${MODEL_PACKS[id].title} is not downloaded yet (${megabytes(bytes)})${how}`, id);
+}
+
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>);
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/** The host the site downloads a pack from, for the consent card; null for its own origin. */
-export function webHost(id: ModelPackId): string | null {
-  const pack: ModelPack = MODEL_PACKS[id];
-  return pack.webSource === "self" ? null : new URL(pack.files[0]!.url).host;
 }
 
 /** "31 MB": sizes as people read them in a download prompt. */

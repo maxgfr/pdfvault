@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
-import { MODEL_PACKS, type ModelPack } from "../engine/src/models.ts";
+import { servedFiles } from "../engine/src/models.ts";
 
 const here = new URL(".", import.meta.url).pathname;
 const root = new URL("../../", import.meta.url).pathname;
@@ -65,8 +65,7 @@ for (const name of ["core", "render", "ocr"]) {
 }
 // The OCR models served for users to download when they first need OCR (GLM-OCR comes from Hugging Face).
 await mkdir(`${dist}/models`, { recursive: true });
-const served: ModelPack[] = Object.values(MODEL_PACKS).filter((p: ModelPack) => p.webSource === "self");
-for (const { name } of served.flatMap((p) => p.files)) await cp(`${root}models/${name}`, `${dist}/models/${name}`);
+for (const { name } of servedFiles) await cp(`${root}models/${name}`, `${dist}/models/${name}`);
 // The fonts the editor writes and previews text with (SIL OFL 1.1, licence alongside).
 await mkdir(`${dist}/fonts`, { recursive: true });
 for (const f of await readdir(`${root}models/fonts`)) {

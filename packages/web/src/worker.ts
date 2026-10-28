@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 // One worker per job: the page stays responsive, and terminating the worker
 // returns every byte of wasm memory to the browser.
-import { Engine, EngineError, glmRecognizer, previewPages, toolById, withDefaults, type EditOps, type Loader, type ModuleName, type Options } from "@pdfvault/engine";
+import { Engine, EngineError, glmRecognizer, previewPages, toolById, withDefaults, type EditOps, type Loader, type ModelPackId, type ModuleName, type Options } from "@pdfvault/engine";
 import { glmUnsupported } from "./glm-support.ts";
 import { glmFiles, readModel, requireInstalled } from "./models.ts";
 
@@ -22,7 +22,7 @@ export type JobMessage =
   | { type: "progress"; done: number; total: number; label: string }
   | { type: "loading"; module: ModuleName }
   | { type: "done"; files: { suffix: string; ext: string; bytes: Uint8Array }[]; report: unknown }
-  | { type: "error"; code: string; message: string; pack?: string };
+  | { type: "error"; code: string; message: string; pack?: ModelPackId };
 
 const post = (m: JobMessage, transfer: Transferable[] = []) => self.postMessage(m, transfer);
 

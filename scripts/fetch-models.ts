@@ -8,7 +8,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MODEL_PACKS, type ModelPack } from "../packages/engine/src/models.ts";
+import { servedFiles, sha256Hex } from "../packages/engine/src/models.ts";
 
 const FONTS_ARCHIVE = {
   url: "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
@@ -33,28 +33,22 @@ const FONTS = {
 const dir = new URL("../models/", import.meta.url).pathname;
 const fontDir = `${dir}fonts/`;
 
-async function sha256(bytes: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Buffer.from(digest).toString("hex");
-}
-
 async function intact(path: string, expected: string): Promise<boolean> {
   const f = Bun.file(path);
-  return (await f.exists()) && (await sha256(await f.arrayBuffer())) === expected;
+  return (await f.exists()) && (await sha256Hex(await f.bytes())) === expected;
 }
 
-async function download(url: string, expected: string, label: string): Promise<ArrayBuffer> {
+async function download(url: string, expected: string, label: string): Promise<Uint8Array> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${label}: HTTP ${res.status}`);
-  const bytes = await res.arrayBuffer();
-  const actual = await sha256(bytes);
+  const bytes = await res.bytes();
+  const actual = await sha256Hex(bytes);
   if (actual !== expected) throw new Error(`${label}: checksum ${actual} does not match ${expected}`);
   return bytes;
 }
 
 await mkdir(fontDir, { recursive: true });
-const served: ModelPack[] = Object.values(MODEL_PACKS).filter((p: ModelPack) => p.webSource === "self");
-for (const { name, url, sha256: expected } of served.flatMap((p) => p.files)) {
+for (const { name, url, sha256: expected } of servedFiles) {
   if (await intact(dir + name, expected)) {
     console.log(`${name}: ok`);
     continue;
@@ -76,8 +70,8 @@ if (missing.length === 0) {
     if (tar.exitCode !== 0) throw new Error(`fonts: tar failed: ${tar.stderr.toString()}`);
     const from = join(tmp, "liberation-fonts-ttf-2.1.5");
     for (const [name, expected] of Object.entries(FONTS)) {
-      const bytes = await Bun.file(join(from, name)).arrayBuffer();
-      const actual = await sha256(bytes);
+      const bytes = await Bun.file(join(from, name)).bytes();
+      const actual = await sha256Hex(bytes);
       if (actual !== expected) throw new Error(`${name}: checksum ${actual} does not match ${expected}`);
       await Bun.write(fontDir + name, bytes);
     }

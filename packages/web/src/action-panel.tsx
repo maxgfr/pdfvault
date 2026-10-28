@@ -1,4 +1,4 @@
-import { EngineError, isModelPackId, outputName, withDefaults, type ModelPackId, type Options, type Tool } from "@pdfvault/engine";
+import { EngineError, outputName, withDefaults, type ModelPackId, type Options, type Tool } from "@pdfvault/engine";
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { FieldInput, visible } from "./fields.tsx";
 import { glmUnsupported } from "./glm-support.ts";
@@ -187,7 +187,7 @@ export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, res
         const err = e instanceof EngineError ? e : new EngineError("internal", String(e));
         if (err.message === "cancelled") break;
         // Ask for the model, and run everything again once it is here.
-        if (err.code === "model_missing" && err.pack && isModelPackId(err.pack)) {
+        if (err.code === "model_missing" && err.pack) {
           setNeedsModel(err.pack);
           results.length = 0;
           break;

@@ -7,8 +7,12 @@ import { join, relative } from "node:path";
 
 const dist = process.argv[2] ?? "packages/web/dist";
 
-// Hosts that may appear as inert strings, each with the reason it is safe.
-const ALLOWED_HOSTS: [string, string][] = [
+// The lazy GLM-OCR chunk, which carries Transformers.js and its strings.
+const GLM_CHUNK = /^assets\/glm-[\w-]+\.js$/;
+
+// Hosts that may appear as inert strings, each with the reason it is safe,
+// and the files they may appear in when that is narrower than every file.
+const ALLOWED_HOSTS: [string, string, RegExp?][] = [
   ["react.dev", "React's minified-error decoder URL inside thrown Error messages"],
   ["www.w3.org", "SVG/XHTML namespace URIs, never dereferenced"],
   ["maxgfr.github.io", "the site's own canonical address in a <link rel=canonical>"],
@@ -22,11 +26,12 @@ const ALLOWED_HOSTS: [string, string][] = [
   ],
   [
     "cdn.jsdelivr.net",
-    "Transformers.js's default location for ONNX Runtime's wasm, in the GLM-OCR chunk; glm.ts points it at the site's own ort/ before any session starts, and the CSP (script-src and connect-src 'self') would block this host",
+    "Transformers.js's default location for ONNX Runtime's wasm; glm.ts points it at the site's own ort/ before any session starts, and the CSP (script-src and connect-src 'self') would block this host",
+    GLM_CHUNK,
   ],
-  ["developer.mozilla.org", "a documentation link inside a Transformers.js error message (GLM-OCR chunk), never requested"],
-  ["web.dev", "documentation link inside an ONNX Runtime error message (GLM-OCR chunk), never requested"],
-  ["gist.github.com", "a link inside a Transformers.js error message (GLM-OCR chunk), never requested"],
+  ["developer.mozilla.org", "a documentation link inside a Transformers.js error message, never requested", GLM_CHUNK],
+  ["web.dev", "documentation link inside an ONNX Runtime error message, never requested", GLM_CHUNK],
+  ["gist.github.com", "a link inside a Transformers.js error message, never requested", GLM_CHUNK],
 ];
 
 const URL_RE = /\bhttps?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi;
@@ -40,7 +45,8 @@ async function* walk(dir: string): AsyncGenerator<string> {
   }
 }
 
-const allowed = new Set(ALLOWED_HOSTS.map(([h]) => h));
+const allowed = new Map(ALLOWED_HOSTS.map(([h, , files]) => [h, files]));
+const allowedIn = (host: string, rel: string) => allowed.has(host) && (allowed.get(host)?.test(rel) ?? true);
 const problems: string[] = [];
 let scanned = 0;
 for await (const path of walk(dist)) {
@@ -59,7 +65,7 @@ for await (const path of walk(dist)) {
   const text = new TextDecoder("latin1").decode(bytes);
   for (const m of text.matchAll(URL_RE)) {
     const host = m[1]!.toLowerCase();
-    if (!allowed.has(host)) problems.push(`${rel}: external URL ${m[0]}`);
+    if (!allowedIn(host, rel)) problems.push(`${rel}: external URL ${m[0]}`);
   }
   for (const m of text.matchAll(FETCH_LITERAL)) problems.push(`${rel}: network call to a literal URL: ${m[0]}`);
 }
