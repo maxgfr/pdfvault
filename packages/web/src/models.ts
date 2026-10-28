@@ -2,7 +2,7 @@
 // the user agrees, checked against their pinned SHA-256, and kept in a cache
 // of their own that app updates leave alone (sw.ts). About lists and deletes
 // them. Shared by the page (download, delete) and the worker (read).
-import { MODEL_PACKS, megabytes, modelMissing, packBytes, packOf, sha256Hex, type ModelFile, type ModelName, type ModelPackId } from "@pdfvault/engine";
+import { MODEL_PACKS, modelMissing, packBytes, packOf, sha256Hex, type ModelFile, type ModelName, type ModelPackId } from "@pdfvault/engine";
 
 export const MODEL_CACHE = "pdfvault-models";
 
@@ -26,12 +26,10 @@ export async function downloadPack(id: ModelPackId, onProgress?: (fraction: numb
   // Ask the browser not to evict the models under storage pressure.
   await navigator.storage?.persist?.().catch(() => false);
   const cache = await caches.open(MODEL_CACHE);
+  // No guess at free space first: storage.estimate() covers the whole origin
+  // (maxgfr.github.io hosts other apps) and can report it full when it is
+  // not. A store that really fails says so below.
   const total = packBytes(id);
-  // Private windows, for one, keep little: say so before downloading.
-  const room = await navigator.storage?.estimate?.().catch(() => undefined);
-  if (room?.quota !== undefined && room.quota - (room.usage ?? 0) < total) {
-    throw new Error(`this browser only lets the site keep ${megabytes(room.quota - (room.usage ?? 0))} more, and the model needs ${megabytes(total)}; a private window has less room than a normal one`);
-  }
   let done = 0;
   let shown = -1;
   // Once per percent, not once per network chunk.
