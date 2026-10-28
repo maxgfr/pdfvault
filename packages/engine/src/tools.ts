@@ -5,6 +5,7 @@ import { parseEdits, redactionBoxes, type EditReport } from "./edit.ts";
 import { isFontKey } from "./fonts.ts";
 import type { Engine, OcrLine, OutFile, RunResult } from "./engine.ts";
 import { EngineError } from "./errors.ts";
+import type { PdfaReport } from "./reports.ts";
 
 export type Category = "compress" | "organize" | "edit" | "security" | "convert" | "image";
 
@@ -993,6 +994,23 @@ export const tools: Tool[] = [
         language: str(o.language) ?? "en",
       });
       return { files: book.files, report: { pages: r.pages, ocrPages: r.ocrPages } };
+    },
+  },
+  {
+    id: "pdfa",
+    title: "Convert to PDF/A",
+    summary: "Archive-grade PDF/A-2b: fonts embedded, colour profile and XMP metadata added, scripts and attachments removed.",
+    category: "convert",
+    input: "pdf",
+    aliases: ["archive"],
+    fields: [password],
+    async run(engine, [pdf], o) {
+      // Standard fonts that are not embedded are replaced with the Liberation font of the same metrics.
+      const plan = await engine.core<{ fonts: string[] }>("pdfa-plan", [pdf!], pw(o));
+      const keys = plan.report.fonts.filter(isFontKey);
+      const fonts = await Promise.all(keys.map((k) => engine.font(k)));
+      const bundled = Object.fromEntries(keys.map((k, i) => [k, i]));
+      return engine.core<PdfaReport>("pdfa", [pdf!, ...fonts], { bundled, ...pw(o) });
     },
   },
   {

@@ -101,6 +101,8 @@ pub const OPS: &[&str] = &[
     "flatten",
     "repair",
     "info",
+    "pdfa-plan",
+    "pdfa",
     "img2pdf",
     "image",
     "image-compress",
@@ -274,6 +276,22 @@ pub fn run(op: &str, inputs: Vec<Vec<u8>>, options: &str) -> Result<Output> {
             files: vec![],
             report: serde_json::to_value(info::info(&one(&inputs, op)?, pw)?)?,
         },
+        "pdfa-plan" => {
+            let doc = inputs
+                .first()
+                .ok_or_else(|| Error::option("pdfa-plan needs the PDF"))?;
+            Output {
+                files: vec![],
+                report: json!({ "fonts": pdfa::plan(doc, pw)? }),
+            }
+        }
+        "pdfa" => {
+            let (bytes, report) = pdfa::convert(&inputs, &parse(&options)?)?;
+            Output {
+                files: vec![file("pdfa", "pdf", bytes)],
+                report: serde_json::to_value(report)?,
+            }
+        }
         "img2pdf" => pdf("images", images::img2pdf(&inputs, &parse(&options)?)?),
         "image" | "image-compress" => {
             let o: images::ImageOptions = parse(&options)?;
@@ -440,6 +458,11 @@ mod tests {
         assert_eq!(out.files[2].suffix, "part-3-3");
         let info = run("info", vec![fixtures::text_pdf(2)], "").unwrap();
         assert_eq!(info.report["pages"], 2);
+        let plan = run("pdfa-plan", vec![fixtures::text_pdf(1)], "").unwrap();
+        assert_eq!(plan.report["fonts"], json!(["sans-regular"]));
+        let a = run("pdfa", vec![fixtures::text_pdf(1)], "").unwrap();
+        assert_eq!(a.files[0].suffix, "pdfa");
+        assert_eq!(a.report["conformant"], false, "Helvetica was not given");
         assert!(run("nope", vec![], "").is_err());
         assert_eq!(
             run("compress", vec![], "").unwrap_err().code(),

@@ -643,6 +643,12 @@ impl Font {
         Some(unligate(&raw))
     }
 
+    /// The text a simple font's encoding gives a code, ToUnicode aside.
+    #[cfg_attr(not(feature = "typeset"), allow(dead_code))]
+    pub(crate) fn encoding_text(&self, code: u8) -> Option<&str> {
+        self.simple_unicode.get(code as usize)?.as_deref()
+    }
+
     /// Word spacing (Tw) applies to single-byte code 32 only.
     pub fn is_word_space(code: u32, len: usize) -> bool {
         code == 32 && len == 1
