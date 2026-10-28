@@ -1,7 +1,6 @@
 import { EngineError, outputName, withDefaults, type ModelPackId, type Options, type Tool } from "@pdfvault/engine";
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { FieldInput, visible } from "./fields.tsx";
-import { glmUnsupported } from "./glm-support.ts";
 import { Icon } from "./icons.tsx";
 import { ModelPrompt } from "./model-prompt.tsx";
 import { Report, bytes } from "./reports.tsx";
@@ -125,13 +124,6 @@ export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, res
   const unlocked = useSyncExternalStore((fn) => vault.subscribe(fn), () => vault.unlocked);
   const formId = useId();
   const toolKey = groups.map((g) => g.tool.id).join("+");
-  // GLM-OCR is offered only where this browser can run it.
-  const offersGlm = groups.some((g) => g.tool.fields.some((f) => f.name === "engine"));
-  const [glmWhy, setGlmWhy] = useState<string | null>(null);
-  useEffect(() => {
-    if (offersGlm) void glmUnsupported().then(setGlmWhy);
-  }, [offersGlm]);
-  const unavailable = (name: string) => (name === "engine" && glmWhy ? { glm: glmWhy } : undefined);
 
   useEffect(() => {
     // Start compiling what the tools need while the user sets options.
@@ -241,7 +233,7 @@ export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, res
               {main.length ? (
                 <div className="grid">
                   {main.map((f) => (
-                    <FieldInput key={f.name} field={f} value={o[f.name]} onChange={set(g.tool, f.name)} idPrefix={prefix} unavailable={unavailable(f.name)} />
+                    <FieldInput key={f.name} field={f} value={o[f.name]} onChange={set(g.tool, f.name)} idPrefix={prefix} />
                   ))}
                 </div>
               ) : null}

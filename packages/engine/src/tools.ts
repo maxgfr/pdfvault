@@ -158,26 +158,7 @@ const permissions = (o: Options) => ({
 interface TextPage {
   page: number;
   spans: { text: string; x: number; y: number; w: number; size: number; bold: boolean }[];
-  /** The page as GLM-OCR wrote it, passed through to the Markdown verbatim. */
-  markdown?: string;
 }
-
-/** The OCR engine for the text outputs. GLM-OCR has no word positions, so OCR to a searchable PDF and Scan keep PP-OCRv6. */
-const engineField: Field = {
-  kind: "select",
-  name: "engine",
-  label: "Text recognition",
-  default: "paddle",
-  choices: [
-    { value: "paddle", label: "PP-OCRv6 · fast" },
-    { value: "glm", label: "GLM-OCR · formulas, harder pages, slow" },
-  ],
-  help: "GLM-OCR reads a whole page at once and writes formulas as LaTeX; tables come out as plain lines. It is a much larger model (a one-time download of about 750 MB) and takes about a minute per page. It gives no word positions, so OCR (searchable PDF) and Scan always use PP-OCRv6.",
-  when: { field: "ocr", is: [true] },
-};
-
-/** Pixels GLM-OCR reads a page at: enough for body text, while its vision encoder stays tractable. */
-const GLM_PIXELS = 1_000_000;
 
 async function renderPage(engine: Engine, pdf: Uint8Array, page: number, dpi: number, password?: string) {
   const r = await engine.render<{ pages: { width: number; height: number }[] }>("render", [pdf], {
@@ -211,16 +192,10 @@ async function pagesText(engine: Engine, pdf: Uint8Array, o: Options, progress?:
   if (o.ocr === false || o.ocr === "false") return { pages: text.report.pages, ocrPages };
   const dpi = num(o.dpi) ?? 200;
   const empty = text.report.pages.filter((p) => p.spans.length === 0);
-  const glm = str(o.engine) === "glm";
-  const sizes = glm && empty.length ? (await engine.core<{ pageSizes: { width: number; height: number }[] }>("info", [pdf], pw(o))).report.pageSizes : [];
   for (const [i, p] of empty.entries()) {
-    progress?.(i, empty.length, glm ? `Reading page ${p.page + 1} with GLM-OCR (about a minute per page)` : `Recognizing text on page ${p.page + 1}`);
-    // GLM-OCR reads a page at a capped pixel count, whatever its size.
-    const size = sizes[p.page];
-    const at = size ? Math.min(dpi, Math.floor(72 * Math.sqrt(GLM_PIXELS / (size.width * size.height)))) : dpi;
-    const img = await renderPage(engine, pdf, p.page, at, str(o.password));
-    if (glm) p.markdown = await engine.glm(img.pixels, img.width, img.height);
-    else p.spans = linesToSpans(await engine.ocr(img.pixels, img.width, img.height), at);
+    progress?.(i, empty.length, `Recognizing text on page ${p.page + 1}`);
+    const img = await renderPage(engine, pdf, p.page, dpi, str(o.password));
+    p.spans = linesToSpans(await engine.ocr(img.pixels, img.width, img.height), dpi);
     ocrPages.push(p.page + 1);
   }
   return { pages: text.report.pages, ocrPages };
@@ -943,7 +918,6 @@ export const tools: Tool[] = [
     heavy: "render",
     fields: [
       { kind: "boolean", name: "ocr", label: "OCR pages without text", default: true },
-      engineField,
       { kind: "boolean", name: "pageBreaks", label: "Mark page breaks", default: false },
       password,
     ],
@@ -961,7 +935,6 @@ export const tools: Tool[] = [
     heavy: "render",
     fields: [
       { kind: "boolean", name: "ocr", label: "OCR pages without text", default: true },
-      engineField,
       { kind: "boolean", name: "pageBreaks", label: "Form feed between pages", default: false },
       password,
     ],
@@ -982,7 +955,6 @@ export const tools: Tool[] = [
       { kind: "text", name: "author", label: "Author", help: "The PDF's author when empty." },
       { kind: "text", name: "language", label: "Language", default: "en", advanced: true },
       { kind: "boolean", name: "ocr", label: "OCR pages without text", default: true },
-      engineField,
       password,
     ],
     async run(engine, [pdf], o, progress) {

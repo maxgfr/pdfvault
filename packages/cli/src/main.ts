@@ -12,6 +12,7 @@ import {
   megabytes,
   modelPackIds,
   outputName,
+  packBytes,
   toolById,
   tools,
   withDefaults,
@@ -22,7 +23,7 @@ import {
   type Tool,
 } from "@pdfvault/engine";
 import { loader } from "./loader.ts";
-import { downloadBytes, hasRuntime, installed, modelDir, pull, remove } from "./models.ts";
+import { installed, modelDir, pull, remove } from "./models.ts";
 import { INSTALL_HINT, SKILL } from "./skill.ts";
 import pkg from "../package.json" with { type: "json" };
 
@@ -316,22 +317,14 @@ command needs one (after asking, or with --download), checked against a pinned
 SHA-256, and kept in ${modelDir()} (set PDFVAULT_MODELS to move it).
 Delete them whenever you like; they come back on the next OCR.
 
-GLM-OCR (to-md, to-text, to-epub --engine glm) also installs its runtime,
-Transformers.js and ONNX Runtime, in the same folder; rm glm deletes both.
-It runs on the CPU: expect about a minute per scanned page.
-
-${modelPackIds.map((id) => `  ${id.padEnd(8)}${MODEL_PACKS[id].title}, ${megabytes(downloadBytes(id))} (${MODEL_PACKS[id].license})`).join("\n")}`;
+${modelPackIds.map((id) => `  ${id.padEnd(8)}${MODEL_PACKS[id].title}, ${megabytes(packBytes(id))} (${MODEL_PACKS[id].license})`).join("\n")}`;
 
 /** Download a pack, with a progress line on a terminal. */
 async function download(id: ModelPackId, quiet: boolean): Promise<void> {
   const tty = process.stderr.isTTY && !quiet;
   const title = MODEL_PACKS[id].title;
-  if (!quiet) process.stderr.write(`Downloading ${title} (${megabytes(downloadBytes(id))})…${tty ? "" : "\n"}`);
-  await pull(
-    id,
-    tty ? (done, total) => process.stderr.write(`\rDownloading ${title}: ${Math.floor((done / total) * 100)}%\x1b[K`) : undefined,
-    () => !quiet && process.stderr.write(`${tty ? "\r\x1b[K" : ""}Installing the GLM-OCR runtime (Transformers.js, ONNX Runtime)…${tty ? "" : "\n"}`),
-  );
+  if (!quiet) process.stderr.write(`Downloading ${title} (${megabytes(packBytes(id))})…${tty ? "" : "\n"}`);
+  await pull(id, tty ? (done, total) => process.stderr.write(`\rDownloading ${title}: ${Math.floor((done / total) * 100)}%\x1b[K`) : undefined);
   if (tty) process.stderr.write("\r\x1b[K");
   if (!quiet) process.stderr.write(`${title} saved in ${modelDir()}. Delete it with: pdfvault models rm ${id}\n`);
 }
@@ -350,7 +343,7 @@ async function models(args: string[]): Promise<number> {
   }
   if (sub === "list" || sub === "--json") {
     const rows = await Promise.all(
-      modelPackIds.map(async (id) => ({ id, title: MODEL_PACKS[id].title, license: MODEL_PACKS[id].license, size: downloadBytes(id), ...(await installed(id)) })),
+      modelPackIds.map(async (id) => ({ id, title: MODEL_PACKS[id].title, license: MODEL_PACKS[id].license, size: packBytes(id), ...(await installed(id)) })),
     );
     if (json) {
       process.stdout.write(JSON.stringify({ dir: modelDir(), models: rows.map(({ id, title, license, size, complete }) => ({ id, title, license, size, installed: complete })) }, null, 2) + "\n");
@@ -359,8 +352,7 @@ async function models(args: string[]): Promise<number> {
         const state = r.complete ? "installed" : r.bytes > 0 ? "partly downloaded" : "not downloaded";
         // Installed: the space it takes; otherwise what downloading it costs.
         const size = megabytes(r.complete ? r.bytes : r.size);
-        const runtime = hasRuntime(r.id) ? " + its runtime" : "";
-        process.stdout.write(`${r.id.padEnd(8)}${state.padEnd(19)}${size.padStart(7)}  ${r.title}${runtime}\n`);
+        process.stdout.write(`${r.id.padEnd(8)}${state.padEnd(19)}${size.padStart(7)}  ${r.title}\n`);
       }
       process.stdout.write(`\nFolder: ${modelDir()}\n`);
     }
@@ -448,9 +440,6 @@ export async function main(argv: string[]): Promise<number> {
 
   const engine = new Engine(loader);
   const options = withDefaults(tool, p.options);
-  if (options.engine === "glm" && options.ocr !== false && !p.quiet) {
-    err("GLM-OCR runs on the CPU here: expect about a minute per scanned page (pages with text are read directly).");
-  }
   const results: JobResult[] = [];
   const log = (s: string) => {
     if (!p.quiet) err(s);
@@ -472,7 +461,7 @@ export async function main(argv: string[]): Promise<number> {
         if (!id || asked.has(id) || !(p.download || interactive)) throw e;
         if (progress) process.stderr.write("\r\x1b[K");
         asked.add(id);
-        if (!p.download && !(await confirm(`${tool.title} needs ${MODEL_PACKS[id].title}, a one-time ${megabytes(downloadBytes(id))} download. Download it?`))) throw e;
+        if (!p.download && !(await confirm(`${tool.title} needs ${MODEL_PACKS[id].title}, a one-time ${megabytes(packBytes(id))} download. Download it?`))) throw e;
         await download(id, p.quiet);
       }
     }

@@ -43,8 +43,7 @@ for (const target of targets) {
   if (target.startsWith("macos") && process.platform !== "darwin") throw new Error(`${target} must be built on macOS (it is re-signed)`);
   const file = `${outDir}/pdfvault-${target}${target.startsWith("windows") ? ".exe" : ""}`;
   const build = Bun.spawnSync(
-    // Reading package.json lets the GLM-OCR runtime, installed on disk, resolve its packages' entry points.
-    ["bun", "build", `${root}packages/cli/src/main.ts`, "--compile", "--compile-autoload-package-json", "--minify", `--target=${bunTarget}`, `--outfile=${file}`],
+    ["bun", "build", `${root}packages/cli/src/main.ts`, "--compile", "--minify", `--target=${bunTarget}`, `--outfile=${file}`],
     { stdout: "inherit", stderr: "inherit" },
   );
   if (build.exitCode !== 0) process.exit(build.exitCode ?? 1);

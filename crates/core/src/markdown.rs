@@ -1,7 +1,6 @@
 //! Positioned text (from the PDF's own text or from OCR) → Markdown.
 //! Headings come from font sizes, paragraphs from line spacing; running
-//! headers and footers repeated across pages are dropped. No AI model here:
-//! a page GLM-OCR already wrote as Markdown is passed through as it is.
+//! headers and footers repeated across pages are dropped. No AI model.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -22,10 +21,6 @@ pub struct Span {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct PageText {
     pub spans: Vec<Span>,
-    /// The page already written as Markdown (GLM-OCR): emitted verbatim,
-    /// its spans ignored.
-    #[serde(default)]
-    pub markdown: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -145,50 +140,9 @@ fn escape(s: &str) -> String {
     out
 }
 
-/// Plain text from Markdown a model wrote: heading and emphasis marks,
-/// inline code ticks and table rules dropped, table cells spaced apart.
-fn strip_markdown(md: &str) -> String {
-    md.lines()
-        .filter(|l| {
-            let t = l.trim();
-            !(t.contains('-') && t.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ')))
-        })
-        .map(|l| {
-            let t = l.trim_start();
-            let t = match t.trim_start_matches('#') {
-                rest if rest.len() < t.len() && rest.starts_with(' ') => rest.trim_start(),
-                _ => t,
-            };
-            let t = t.strip_prefix("> ").unwrap_or(t);
-            let t = t.replace("**", "").replace("__", "").replace('`', "");
-            if t.trim_start().starts_with('|') {
-                let cells: Vec<&str> = t
-                    .trim()
-                    .trim_matches('|')
-                    .split('|')
-                    .map(str::trim)
-                    .collect();
-                cells.join("  ")
-            } else {
-                t
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-pub fn to_markdown(src: &[PageText], o: &MarkdownOptions) -> String {
+pub fn to_markdown(pages: &[PageText], o: &MarkdownOptions) -> String {
     let escape = |s: &str| if o.plain { s.to_string() } else { escape(s) };
-    let mut pages: Vec<Vec<Line>> = src
-        .iter()
-        .map(|p| {
-            if p.markdown.is_some() {
-                vec![]
-            } else {
-                lines_of(p)
-            }
-        })
-        .collect();
+    let mut pages: Vec<Vec<Line>> = pages.iter().map(lines_of).collect();
 
     // Running heads: a first or last line set apart from the body by a wide
     // gap, repeated (digits aside) on many pages.
@@ -263,17 +217,6 @@ pub fn to_markdown(src: &[PageText], o: &MarkdownOptions) -> String {
             } else {
                 "---".into()
             });
-        }
-        if let Some(md) = src[pi].markdown.as_deref() {
-            let md = if o.plain {
-                strip_markdown(md)
-            } else {
-                md.to_string()
-            };
-            if !md.trim().is_empty() {
-                out.push(md.trim().to_string());
-            }
-            continue;
         }
         let mut para = String::new();
         let mut prev: Option<&Line> = None;
@@ -355,7 +298,6 @@ mod tests {
                 span("• first item", 220.0, 11.0),
                 span("2. second item", 234.0, 11.0),
             ],
-            ..Default::default()
         };
         let md = to_markdown(&[page], &MarkdownOptions::default());
         assert_eq!(
@@ -371,7 +313,6 @@ mod tests {
                 span("Title *x*", 10.0, 20.0),
                 span("Body_text.", 50.0, 10.0),
             ],
-            ..Default::default()
         };
         let o = MarkdownOptions {
             plain: true,
@@ -389,45 +330,11 @@ mod tests {
                     span(&format!("Body text of page {i} goes on."), 100.0, 11.0),
                     span(&format!("Page {i}"), 780.0, 9.0),
                 ],
-                ..Default::default()
             })
             .collect();
         let md = to_markdown(&pages, &MarkdownOptions::default());
         assert!(!md.contains("ACME") && !md.contains("Page 2"), "{md}");
         assert!(md.contains("Body text of page 3"));
-    }
-
-    #[test]
-    fn written_markdown_is_verbatim() {
-        let glm = "# Invoice\n\n| Item | Total |\n| --- | --- |\n| **Tea** | 4_50 |\n\n$x^2$";
-        let pages = vec![
-            PageText {
-                spans: vec![span("Typed page.", 100.0, 11.0)],
-                ..Default::default()
-            },
-            PageText {
-                // Spans are ignored when the page comes as Markdown.
-                spans: vec![span("ignored", 100.0, 30.0)],
-                markdown: Some(format!("{glm}\n\n")),
-            },
-        ];
-        let md = to_markdown(
-            &pages,
-            &MarkdownOptions {
-                page_breaks: true,
-                ..Default::default()
-            },
-        );
-        assert_eq!(md, format!("Typed page.\n\n---\n\n{glm}\n"));
-
-        let plain = to_markdown(
-            &pages[1..],
-            &MarkdownOptions {
-                plain: true,
-                ..Default::default()
-            },
-        );
-        assert_eq!(plain, "Invoice\n\nItem  Total\nTea  4_50\n\n$x^2$\n");
     }
 
     #[test]
@@ -451,7 +358,6 @@ mod tests {
                     bold: false,
                 },
             ],
-            ..Default::default()
         };
         assert_eq!(
             to_markdown(&[page], &MarkdownOptions::default()),

@@ -7,12 +7,8 @@ import { join, relative } from "node:path";
 
 const dist = process.argv[2] ?? "packages/web/dist";
 
-// The lazy GLM-OCR chunk, which carries Transformers.js and its strings.
-const GLM_CHUNK = /^assets\/glm-[\w-]+\.js$/;
-
-// Hosts that may appear as inert strings, each with the reason it is safe,
-// and the files they may appear in when that is narrower than every file.
-const ALLOWED_HOSTS: [string, string, RegExp?][] = [
+// Hosts that may appear as inert strings, each with the reason it is safe.
+const ALLOWED_HOSTS: [string, string][] = [
   ["react.dev", "React's minified-error decoder URL inside thrown Error messages"],
   ["www.w3.org", "SVG/XHTML namespace URIs, never dereferenced"],
   ["maxgfr.github.io", "the site's own canonical address in a <link rel=canonical>"],
@@ -22,16 +18,8 @@ const ALLOWED_HOSTS: [string, string, RegExp?][] = [
   ["ns.adobe.com", "XMP namespace strings inside the PDF engine"],
   [
     "huggingface.co",
-    "upstream source of each OCR model in the shared catalog (models.ts). The site downloads GLM-OCR's pinned files from there, only after the user agrees (the CSP's connect-src allows huggingface.co and its *.hf.co download servers for that); PP-OCRv6 comes from the site's own origin, and the CLI downloads both from there. Also Transformers.js's default model host, disabled in glm.ts (allowRemoteModels = false, fetch refused)",
+    "upstream source of each OCR model in the shared catalog (models.ts), which the CLI downloads from; the site downloads the same pinned files from its own origin, and its CSP (connect-src 'self') would block this host",
   ],
-  [
-    "cdn.jsdelivr.net",
-    "Transformers.js's default location for ONNX Runtime's wasm; glm.ts points it at the site's own ort/ before any session starts, and the CSP (script-src and connect-src 'self') would block this host",
-    GLM_CHUNK,
-  ],
-  ["developer.mozilla.org", "a documentation link inside a Transformers.js error message, never requested", GLM_CHUNK],
-  ["web.dev", "documentation link inside an ONNX Runtime error message, never requested", GLM_CHUNK],
-  ["gist.github.com", "a link inside a Transformers.js error message, never requested", GLM_CHUNK],
 ];
 
 const URL_RE = /\bhttps?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi;
@@ -45,8 +33,7 @@ async function* walk(dir: string): AsyncGenerator<string> {
   }
 }
 
-const allowed = new Map(ALLOWED_HOSTS.map(([h, , files]) => [h, files]));
-const allowedIn = (host: string, rel: string) => allowed.has(host) && (allowed.get(host)?.test(rel) ?? true);
+const allowed = new Set(ALLOWED_HOSTS.map(([h]) => h));
 const problems: string[] = [];
 let scanned = 0;
 for await (const path of walk(dist)) {
@@ -65,7 +52,7 @@ for await (const path of walk(dist)) {
   const text = new TextDecoder("latin1").decode(bytes);
   for (const m of text.matchAll(URL_RE)) {
     const host = m[1]!.toLowerCase();
-    if (!allowedIn(host, rel)) problems.push(`${rel}: external URL ${m[0]}`);
+    if (!allowed.has(host)) problems.push(`${rel}: external URL ${m[0]}`);
   }
   for (const m of text.matchAll(FETCH_LITERAL)) problems.push(`${rel}: network call to a literal URL: ${m[0]}`);
 }

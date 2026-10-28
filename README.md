@@ -37,7 +37,7 @@ The editor opens a PDF page by page. **Edit text**: click a paragraph of the doc
 | Organize | Merge (one bookmark per file), combine PDFs and images into one PDF, split (ranges, every N pages, by bookmark), extract, delete, reorder, rotate, insert blank pages, N-up (2–16 pages per sheet) |
 | Edit | **Editor**: change existing text, add text in any script, whiteout, shapes, drawing, signature and images, highlights and notes as annotations, form filling, true redaction that keeps the rest of the page selectable, page strip. **Viewer**. Crop (drag a box over the page, or type the margins), text watermark, page numbers, header and footer, visual signature (image stamp), metadata (read, edit, wipe), flatten forms, repair, compare (pixel diff per page), info |
 | Security | Password protection with **AES-256** (PDF 2.0, revision 6), permissions, unlock |
-| Convert | **Scan**: photos of paper → a straightened, cleaned-up PDF, Images → PDF (JPEGs embedded untouched, EXIF orientation honored), PDF → PNG/JPEG/WebP, **OCR → searchable PDF**, PDF → Markdown, text or EPUB (OCR on scanned pages, optionally with GLM-OCR, which reads harder pages and writes formulas as LaTeX), **PDF/A-2b** for archiving (fonts embedded, colour profile, XMP metadata; scripts and attachments removed) |
+| Convert | **Scan**: photos of paper → a straightened, cleaned-up PDF, Images → PDF (JPEGs embedded untouched, EXIF orientation honored), PDF → PNG/JPEG/WebP, **OCR → searchable PDF**, PDF → Markdown, text or EPUB (OCR on scanned pages), **PDF/A-2b** for archiving (fonts embedded, colour profile, XMP metadata; scripts and attachments removed) |
 | Images | Compress, resize, convert JPEG/PNG/WebP, strip EXIF/GPS/XMP without re-encoding, crop (drag a box over the image, or type the rectangle)/rotate/flip, in batches |
 
 ### Compression levels
@@ -81,13 +81,6 @@ bunx pdfvault models pull paddle  # download ahead of time
 bunx pdfvault models rm paddle    # delete it (or: models rm --all)
 ```
 
-For scans full of tables or formulas, `to-md`, `to-text` and `to-epub` take `--engine glm`: pages without text are read by [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) (q4, through Transformers.js and ONNX Runtime), which writes them as Markdown with tables and LaTeX formulas. It is optional and asked for like the default model, but much larger: `models pull glm` downloads 742 MB of pinned, checksummed model files and installs its runtime (Transformers.js 4.3.1 and onnxruntime-node 1.30.0, about 117 MB, from the lockfile in `packages/cli/glm-runtime`) into the same folder with Bun; `models rm glm` deletes both. It runs on the CPU, at about a minute per page and a few GB of memory. It gives no word positions, so `ocr` and `scan --ocr` always use PP-OCRv6.
-
-```sh
-bunx pdfvault to-md tables.pdf --engine glm --download   # GLM-OCR for the scanned pages
-bunx pdfvault models rm glm                              # model and runtime gone
-```
-
 Standalone binaries (macOS, Linux, Windows × arm64, x64; `brew install maxgfr/tap/pdfvault` on macOS and Linux) are on the [releases page](https://github.com/maxgfr/pdfvault/releases) with a `SHA256SUMS` file and provenance attestations (`gh attestation verify pdfvault-macos-arm64 -R maxgfr/pdfvault`).
 
 - Every command accepts globs, `-` for stdin, `-o -` for stdout, `-o dir/` for several outputs.
@@ -109,9 +102,9 @@ npx skills add maxgfr/pdfvault -a codex    # or name them
 
 ## How privacy is enforced
 
-- **No network after load.** A Content Security Policy in a `<meta>` tag (GitHub Pages cannot send headers): `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https://huggingface.co https://*.hf.co; img-src 'self' blob: data:; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'`, plus `referrer: no-referrer`. Trusted Types only vouch for the app's own worker and service worker. Fonts, icons and scripts all ship from this repository, ONNX Runtime included. The one exception to "connect to this site only" is GLM-OCR, an optional model too large for GitHub Pages: after you agree, the page downloads its pinned files from Hugging Face (`huggingface.co`, which redirects to a regional `*.hf.co` download server). Those requests carry none of your files.
+- **No network after load.** A Content Security Policy in a `<meta>` tag (GitHub Pages cannot send headers): `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; img-src 'self' blob: data:; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'`, plus `referrer: no-referrer`. Trusted Types only vouch for the app's own worker and service worker. Fonts, icons, scripts and the OCR model all ship from this repository's site.
 - **Checked in CI.** `scripts/check-no-network.ts` fails the build if the bundle contains an external URL that is not allowlisted with a reason, a network call to a literal URL, or a wasm module importing a network API. Playwright asserts zero cross-origin requests and zero CSP violations while every tool runs.
-- **Offline.** A service worker caches the app shell on first visit; the renderer and fonts are cached the first time a tool needs them. The OCR model is downloaded from the site itself only after you agree (31 MB), checked against its SHA-256 and kept in a cache app updates leave alone; the Privacy page lists it and deletes it. GLM-OCR (742 MB, from Hugging Face) is kept and deleted the same way; it runs in the job worker on WebGPU (desktop browsers; it is not offered on iPhone and iPad, or without WebGPU), and Transformers.js reads it only from that cache, never from the network. The test suite runs tools in airplane mode, and checks that nothing goes to Hugging Face before you agree.
+- **Offline.** A service worker caches the app shell on first visit; the renderer and fonts are cached the first time a tool needs them. The OCR model is downloaded from the site itself only after you agree (31 MB), checked against its SHA-256 and kept in a cache app updates leave alone; the Privacy page lists it and deletes it. The test suite runs tools in airplane mode.
 - **Memory.** Each job runs in its own Web Worker, terminated when the job ends, which frees all wasm memory. Inputs are size- and page-limited, and jobs time out.
 - **Encrypted vault (optional, off by default).** Keep files in IndexedDB, sealed with AES-256-GCM under a key derived from your passphrase with Argon2id (64 MiB, 3 passes) in the Rust engine and imported into WebCrypto as non-extractable. File names are encrypted too. It locks after 5 minutes idle or when the tab is hidden, and has an emergency wipe. Without it, nothing is stored.
 - **Verifiable builds.** The site is built and tested by GitHub Actions and deployed with a build provenance attestation (`gh attestation verify index.html -R maxgfr/pdfvault` on a downloaded file). Actions are pinned by commit SHA; `cargo deny`, `osv-scanner` and a fuzzing run of the PDF parser gate every push. Frames are refused by a script guard, since `frame-ancestors` needs a header.
@@ -128,8 +121,7 @@ crates/
   fixtures/  writes the generated test documents
 packages/
   engine/    TypeScript API over the three wasm modules + the tool registry
-  cli/       the pdfvault command (Bun), compiled per platform with bun build --compile;
-             glm-runtime/ pins the GLM-OCR runtime it installs on demand
+  cli/       the pdfvault command (Bun), compiled per platform with bun build --compile
   web/       React 19 site bundled with Bun, Web Worker, service worker, vault
 skills/pdfvault/  the agent skill
 e2e/         Playwright: every tool, security, offline, CLI ↔ browser parity, vault
@@ -158,7 +150,6 @@ Fuzzing: `cd fuzz && cargo +nightly fuzz run parse`.
 ## Limits
 
 - OCR reads 50 languages (Latin scripts with their accents, Chinese, Japanese), in horizontal lines; vertical text is not read.
-- GLM-OCR writes Markdown, text and EPUB only (no word positions for a searchable PDF). It is slow: about a minute per page on a CPU, and on the site it needs WebGPU and a desktop browser with memory to spare.
 - `extreme` turns text into pixels; run OCR on the result if it must stay searchable.
 - Fonts are not subset, so text-only PDFs shrink less than image-heavy ones.
 - PDF/A: the output is PDF/A-2b (not -2u or -3). A standard font that is not embedded (Helvetica, Times, Courier, Arial, Times New Roman, Courier New) is embedded as the whole Liberation font of the same metrics, about 200 KB per style; any other font that is not embedded, and an annotation without an appearance, are listed in the report's `blockers` and the file then does not claim PDF/A. Attachments are removed (PDF/A-2 allows only PDF/A attachments, which pdfvault cannot check), hidden annotations become visible and printable, device CMYK colour gets a SWOP-like CMYK profile. Check critical archives with a validator such as [veraPDF](https://verapdf.org).
@@ -173,7 +164,7 @@ Fuzzing: `cd fuzz && cargo +nightly fuzz run parse`.
 
 ## Credits
 
-Built on [lopdf](https://github.com/J-F-Liu/lopdf), [hayro](https://github.com/LaurenzV/hayro), [rten](https://github.com/robertknight/rten), [image](https://github.com/image-rs/image), [jpeg-encoder](https://github.com/vstroebel/jpeg-encoder), [miniz_oxide](https://github.com/Frommi/miniz_oxide) and [RustCrypto argon2](https://github.com/RustCrypto/password-hashes), [HarfRust](https://github.com/harfbuzz/harfrust), [skrifa](https://github.com/googlefonts/fontations), [subsetter](https://github.com/typst/subsetter) and [unicode-bidi](https://github.com/servo/unicode-bidi). The editor writes text with the [Liberation fonts](https://github.com/liberationfonts/liberation-fonts) (SIL Open Font License 1.1). PDF/A output embeds the sRGB and CGATS 001 (SWOP-compatible) colour profiles from [Compact-ICC-Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles) (CC0 1.0). The OCR models are [PP-OCRv6 small](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) by PaddlePaddle, licensed Apache-2.0, downloaded on first use, and optionally [GLM-OCR](https://huggingface.co/zai-org/GLM-OCR) by Z.ai (MIT, the [ONNX export](https://huggingface.co/onnx-community/GLM-OCR-ONNX) by onnx-community), run with [Transformers.js](https://github.com/huggingface/transformers.js) and [ONNX Runtime](https://github.com/microsoft/onnxruntime) (Apache-2.0 and MIT). This software is based in part on the work of the Independent JPEG Group. Inspired by [PDFCraft](https://github.com/PDFCraftTool/pdfcraft) and [pdf-craft](https://github.com/oomol-lab/pdf-craft).
+Built on [lopdf](https://github.com/J-F-Liu/lopdf), [hayro](https://github.com/LaurenzV/hayro), [rten](https://github.com/robertknight/rten), [image](https://github.com/image-rs/image), [jpeg-encoder](https://github.com/vstroebel/jpeg-encoder), [miniz_oxide](https://github.com/Frommi/miniz_oxide) and [RustCrypto argon2](https://github.com/RustCrypto/password-hashes), [HarfRust](https://github.com/harfbuzz/harfrust), [skrifa](https://github.com/googlefonts/fontations), [subsetter](https://github.com/typst/subsetter) and [unicode-bidi](https://github.com/servo/unicode-bidi). The editor writes text with the [Liberation fonts](https://github.com/liberationfonts/liberation-fonts) (SIL Open Font License 1.1). PDF/A output embeds the sRGB and CGATS 001 (SWOP-compatible) colour profiles from [Compact-ICC-Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles) (CC0 1.0). The OCR models are [PP-OCRv6 small](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) by PaddlePaddle, licensed Apache-2.0, downloaded on first use. This software is based in part on the work of the Independent JPEG Group. Inspired by [PDFCraft](https://github.com/PDFCraftTool/pdfcraft) and [pdf-craft](https://github.com/oomol-lab/pdf-craft).
 
 ## License
 
