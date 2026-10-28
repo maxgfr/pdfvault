@@ -16,6 +16,7 @@ const cases: { id: string; title: string; files: string[]; ui: Record<string, st
   { id: "pdf2img", title: "PDF to images", files: ["text-3.pdf"], ui: { Resolution: "50" }, args: ["--dpi", "50"] },
   { id: "img-compress", title: "Compress images", files: ["photo.jpg"], ui: { "JPEG quality": "40" }, args: ["--quality", "40"] },
   { id: "to-md", title: "PDF to Markdown", files: ["text-3.pdf"], ui: {}, args: [] },
+  { id: "md2pdf", title: "Markdown to PDF", files: ["notes.md"], ui: {}, args: [] },
   { id: "combine", title: "Combine into one PDF", files: ["photo.jpg", "text-3.pdf"], ui: {}, args: [] },
 ];
 

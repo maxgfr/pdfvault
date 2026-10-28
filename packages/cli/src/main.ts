@@ -176,6 +176,8 @@ function checkKinds(tool: Tool, inputs: Input[]) {
       case "pdf+image":
       case "pdf+images":
         return i === 0 ? "pdf" : "image";
+      case "markdown":
+        return "text";
     }
   };
   inputs.forEach((input, i) => {
@@ -183,6 +185,7 @@ function checkKinds(tool: Tool, inputs: Input[]) {
     if (kind === "any" && !isPdf(input.bytes) && !isImage(input.bytes)) throw new UsageError(`${input.name} is neither a PDF nor an image`);
     if (kind === "pdf" && !isPdf(input.bytes)) throw new UsageError(`${input.name} is not a PDF`);
     if (kind === "image" && isPdf(input.bytes)) throw new UsageError(`${input.name} is a PDF; ${tool.id} expects images`);
+    if (kind === "text" && (isPdf(input.bytes) || isImage(input.bytes) || input.bytes.includes(0))) throw new UsageError(`${input.name} is not a Markdown or text file`);
   });
   const n = inputs.length;
   if (n === 0) throw new UsageError(`${tool.id} needs input files`);
@@ -194,7 +197,7 @@ function checkKinds(tool: Tool, inputs: Input[]) {
 
 /** Group inputs into jobs: batch tools run once per file. */
 function jobs(tool: Tool, inputs: Input[]): Input[][] {
-  return tool.input === "pdf" || tool.input === "image" ? inputs.map((i) => [i]) : [inputs];
+  return tool.input === "pdf" || tool.input === "image" || tool.input === "markdown" ? inputs.map((i) => [i]) : [inputs];
 }
 
 async function isDir(path: string): Promise<boolean> {
@@ -273,6 +276,7 @@ Exit codes: 0 success, 1 a file failed, 2 usage error.`;
     "pdf+image": "<pdf> <image>",
     "pdf+images": "<pdf> [image or font file...]",
     "pdf+pdf": "<pdf> <pdf>",
+    markdown: "<markdown...>",
   };
   return `pdfvault ${tool.id} ${inputs[tool.input]} [options]
 

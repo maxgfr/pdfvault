@@ -15,6 +15,8 @@ pub mod info;
 pub mod interp;
 pub mod kdf;
 pub mod markdown;
+#[cfg(feature = "typeset")]
+pub mod mdpdf;
 pub mod meta;
 pub mod pages;
 pub mod paragraphs;

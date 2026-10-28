@@ -9,10 +9,11 @@ import { isImage, isPdf, workspace } from "./workspace.ts";
 
 export { download, type InFile } from "./action-panel.tsx";
 
-type SlotKind = "pdf" | "image" | "any";
+type SlotKind = "pdf" | "image" | "any" | "text";
 
 const PDF_ACCEPT = "application/pdf,.pdf";
 const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp,image/gif,image/bmp";
+const MARKDOWN_ACCEPT = ".md,.markdown,.txt,text/markdown,text/plain";
 
 /** Which drop slots a tool shows. Paired tools get two labeled slots. */
 function slots(tool: Tool): { label: string; accept: string; multiple: boolean; kind: SlotKind }[] {
@@ -44,11 +45,15 @@ function slots(tool: Tool): { label: string; accept: string; multiple: boolean; 
         { ...pdf, label: "Original PDF", multiple: false },
         { ...pdf, label: "Changed PDF", multiple: false },
       ];
+    case "markdown":
+      return [{ accept: MARKDOWN_ACCEPT, kind: "text", label: "Markdown files", multiple: true }];
   }
 }
 
-const fits = (kind: SlotKind, b: Uint8Array) => (kind === "pdf" ? isPdf(b) : kind === "image" ? isImage(b) : isPdf(b) || isImage(b));
-const kindName: Record<SlotKind, string> = { pdf: "a PDF", image: "an image", any: "a PDF or an image" };
+const isText = (b: Uint8Array) => !isPdf(b) && !isImage(b) && !b.includes(0);
+const fits = (kind: SlotKind, b: Uint8Array) =>
+  kind === "pdf" ? isPdf(b) : kind === "image" ? isImage(b) : kind === "text" ? isText(b) : isPdf(b) || isImage(b);
+const kindName: Record<SlotKind, string> = { pdf: "a PDF", image: "an image", any: "a PDF or an image", text: "a Markdown file" };
 
 export function Drop({
   label,

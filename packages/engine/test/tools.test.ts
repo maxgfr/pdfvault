@@ -300,6 +300,18 @@ describe("text and OCR", () => {
     expect(md).toContain("# Page 3");
   });
 
+  test("md2pdf typesets Markdown with selectable text", async () => {
+    const r = await run("md2pdf", [await fixture("notes.md")]);
+    const pdf = firstPdf(r);
+    expect(r.files[0]!.suffix).toBe("");
+    await qpdfCheck(pdf);
+    expect(r.report).toMatchObject({ pages: 1, replaced: 0 });
+    const text = new TextDecoder().decode((await run("to-text", [pdf], { ocr: false })).files[0]!.bytes);
+    for (const want of ["Notes de réunion", "1 250,00 €", "accepté", "Second point", "534,95", "total = 1069,90"]) expect(text).toContain(want);
+    const serif = await run("md2pdf", [await fixture("notes.md")], { font: "serif", pageSize: "letter", pageNumbers: false });
+    await qpdfCheck(firstPdf(serif));
+  });
+
   test("to-text and to-epub", async () => {
     const text = new TextDecoder().decode((await run("to-text", [await fixture("text-3.pdf")], { ocr: false })).files[0]!.bytes);
     expect(text).toStartWith("Page 1\n\nThe quick brown fox");

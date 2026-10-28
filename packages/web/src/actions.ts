@@ -39,6 +39,9 @@ export function fit(t: Tool, sel: WorkFile[]): Group[] | null {
       return onlyPdfs && pdfs.length === 2 ? [{ tool: t, slots: [[asIn(pdfs[0]!)], [asIn(pdfs[1]!)]] }] : null;
     case "pdf+images":
       return pdfs.length === 1 && pdfs.length + images.length === sel.length ? [{ tool: t, slots: [[asIn(pdfs[0]!)], images.map(asIn)] }] : null;
+    case "markdown":
+      // The workspace holds PDFs and images only; Markdown goes through the tool page.
+      return null;
   }
 }
 

@@ -91,7 +91,7 @@ export function ShareButton({ name, data, className = "secondary small" }: { nam
 
 /** Batch tools run once per file of their first slot; the others once over every slot. */
 function jobsOf(g: Group): InFile[][] {
-  return g.tool.input === "pdf" || g.tool.input === "image" ? g.slots[0]!.map((f) => [f]) : [g.slots.flat()];
+  return g.tool.input === "pdf" || g.tool.input === "image" || g.tool.input === "markdown" ? g.slots[0]!.map((f) => [f]) : [g.slots.flat()];
 }
 
 const heavyOf = (t: Tool) => (t.heavy === "ocr" ? (["render", "ocr"] as const) : t.heavy === "render" ? (["render"] as const) : ([] as const));

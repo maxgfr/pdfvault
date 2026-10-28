@@ -14,6 +14,7 @@ fn main() {
     let sig = image::DynamicImage::ImageRgba8(f::with_alpha(&f::line_art(300, 120)));
     let files: Vec<(&str, Vec<u8>)> = vec![
         ("text-3.pdf", f::text_pdf(3)),
+        ("notes.md", f::markdown()),
         ("text-5.pdf", f::text_pdf(5)),
         ("photo.pdf", f::photo_pdf()),
         ("lineart.pdf", f::lineart_pdf()),

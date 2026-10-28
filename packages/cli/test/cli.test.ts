@@ -12,7 +12,7 @@ let dir: string;
 
 beforeAll(async () => {
   dir = await realpath(await mkdtemp(join(tmpdir(), "pdfvault-cli-")));
-  for (const f of ["text-3.pdf", "text-5.pdf", "photo.pdf", "corrupt.pdf", "photo.jpg", "locked.pdf"]) {
+  for (const f of ["text-3.pdf", "text-5.pdf", "photo.pdf", "corrupt.pdf", "photo.jpg", "locked.pdf", "notes.md"]) {
     await cp(`${fixtures}/${f}`, `${dir}/${f}`);
   }
 });
@@ -52,6 +52,18 @@ describe("usage", () => {
 });
 
 describe("running", () => {
+  test("md2pdf turns notes.md into notes.pdf and refuses a PDF", async () => {
+    const r = cli(["md2pdf", "notes.md", "--json"]);
+    expect(r.code).toBe(0);
+    const body = JSON.parse(r.out);
+    expect(body).toMatchObject({ command: "md2pdf", ok: true });
+    expect(body.results[0].outputs[0].path).toBe(join(dir, "notes.pdf"));
+    expect(body.results[0].report).toMatchObject({ pages: 1 });
+    const pdf = new Uint8Array(await Bun.file(`${dir}/notes.pdf`).arrayBuffer());
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe("%PDF-");
+    expect(cli(["md2pdf", "text-3.pdf"]).err).toContain("is not a Markdown or text file");
+  });
+
   test("compress writes next to the input and reports in --json", () => {
     const r = cli(["compress", "photo.pdf", "--json"]);
     expect(r.code).toBe(0);

@@ -2,7 +2,7 @@
 // list and the site derives its forms, so both run identical code paths.
 
 import { parseEdits, redactionBoxes, type EditReport } from "./edit.ts";
-import { isFontKey } from "./fonts.ts";
+import { isFontKey, type FontKey } from "./fonts.ts";
 import type { Engine, OcrLine, OutFile, RunResult } from "./engine.ts";
 import { EngineError } from "./errors.ts";
 import type { PdfaReport } from "./reports.ts";
@@ -10,8 +10,8 @@ import type { PdfaReport } from "./reports.ts";
 export type Category = "compress" | "organize" | "edit" | "security" | "convert" | "image";
 
 /** What a tool consumes. Batch tools run once per input file. */
-/** `mixed` takes PDFs and images in any order. */
-export type InputKind = "pdf" | "pdfs" | "image" | "images" | "mixed" | "pdf+image" | "pdf+images" | "pdf+pdf";
+/** `mixed` takes PDFs and images in any order; `markdown` is UTF-8 text, one file per run. */
+export type InputKind = "pdf" | "pdfs" | "image" | "images" | "mixed" | "pdf+image" | "pdf+images" | "pdf+pdf" | "markdown";
 
 interface FieldBase {
   name: string;
@@ -969,6 +969,54 @@ export const tools: Tool[] = [
     },
   },
   {
+    id: "md2pdf",
+    title: "Markdown to PDF",
+    summary: "Typeset Markdown (headings, lists, tables, code) as a PDF with selectable text and bookmarks.",
+    category: "convert",
+    input: "markdown",
+    aliases: ["from-md"],
+    fields: [
+      {
+        kind: "select",
+        name: "pageSize",
+        label: "Page size",
+        default: "a4",
+        choices: [
+          { value: "a4", label: "A4" },
+          { value: "letter", label: "US Letter" },
+        ],
+      },
+      {
+        kind: "select",
+        name: "font",
+        label: "Font",
+        default: "sans",
+        choices: [
+          { value: "sans", label: "Sans serif (Liberation Sans)" },
+          { value: "serif", label: "Serif (Liberation Serif)" },
+        ],
+      },
+      { kind: "number", name: "fontSize", label: "Text size", min: 6, max: 20, step: 0.5, default: 10.5, unit: "pt" },
+      { kind: "number", name: "margin", label: "Margin", min: 10, max: 150, default: 50, unit: "pt", advanced: true },
+      { kind: "text", name: "title", label: "Document title", help: "The first heading when empty.", advanced: true },
+      { kind: "boolean", name: "pageNumbers", label: "Number pages", default: true },
+    ],
+    async run(engine, [md], o) {
+      const family = str(o.font) === "serif" ? "serif" : "sans";
+      const keys: FontKey[] = [`${family}-regular`, `${family}-bold`, `${family}-italic`, `${family}-bolditalic`, "mono-regular", "mono-bold"];
+      const fonts = await Promise.all(keys.map((k) => engine.font(k)));
+      return engine.core("md2pdf", [md!, ...fonts], {
+        bundled: Object.fromEntries(keys.map((k, i) => [k, i])),
+        pageSize: str(o.pageSize) ?? "a4",
+        font: family,
+        fontSize: num(o.fontSize) ?? 10.5,
+        margin: num(o.margin) ?? 50,
+        title: str(o.title) ?? "",
+        pageNumbers: o.pageNumbers === undefined ? true : bool(o.pageNumbers),
+      });
+    },
+  },
+  {
     id: "pdfa",
     title: "Convert to PDF/A",
     summary: "Archive-grade PDF/A-2b: fonts embedded, colour profile and XMP metadata added, scripts and attachments removed.",
@@ -1147,10 +1195,10 @@ export function withDefaults(tool: Tool, options: Options): Options {
   return out;
 }
 
-/** `report.pdf` + suffix "compressed" → `report-compressed.pdf`. */
+/** `report.pdf` + suffix "compressed" → `report-compressed.pdf`; no suffix: `notes.md` → `notes.pdf`. */
 export function outputName(inputName: string, file: OutFile): string {
   const base = inputName.replace(/\.[^./\\]+$/, "") || "output";
-  return `${base}-${file.suffix}.${file.ext}`;
+  return file.suffix ? `${base}-${file.suffix}.${file.ext}` : `${base}.${file.ext}`;
 }
 
 export const categories: { id: Category; title: string }[] = [

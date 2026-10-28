@@ -436,3 +436,14 @@ pub fn corrupt_pdf() -> Vec<u8> {
     v.extend(b"\ngarbage that is not a pdf object\n");
     v
 }
+
+/// A short Markdown note with the blocks `md2pdf` lays out: headings, a list,
+/// a table, code and accented text.
+pub fn markdown() -> Vec<u8> {
+    "# Notes de réunion\n\nLe devis de **1 250,00 €** est *accepté*.\n\n\
+     - Premier point\n- Second point\n\n\
+     | Date | Montant |\n|---|---:|\n| 2026-01-05 | 534,95 |\n| 2026-02-05 | 534,95 |\n\n\
+     ```\ntotal = 1069,90\n```\n"
+        .as_bytes()
+        .to_vec()
+}

@@ -112,6 +112,7 @@ pub const OPS: &[&str] = &[
     "rebuild-raster",
     "text-layer",
     "markdown",
+    "md2pdf",
     "epub",
     "kdf",
     "zip",
@@ -370,6 +371,23 @@ pub fn run(op: &str, inputs: Vec<Vec<u8>>, options: &str) -> Result<Output> {
                 "searchable",
                 textlayer::add_text_layer(&one(&inputs, op)?, o.password.as_deref(), &o.pages)?,
             )
+        }
+        #[cfg(feature = "typeset")]
+        "md2pdf" => {
+            let (md, fonts) = inputs
+                .split_first()
+                .ok_or_else(|| Error::option("md2pdf needs the Markdown file"))?;
+            let (bytes, report) = mdpdf::md2pdf(md, fonts, &parse(&options)?)?;
+            Output {
+                files: vec![file("", "pdf", bytes)],
+                report: serde_json::to_value(report)?,
+            }
+        }
+        #[cfg(not(feature = "typeset"))]
+        "md2pdf" => {
+            return Err(Error::Unsupported(
+                "Markdown to PDF needs the typeset feature".into(),
+            ));
         }
         "markdown" => {
             #[derive(Deserialize, Default)]
