@@ -1,9 +1,7 @@
 export { Engine } from "./engine.ts";
 export type { Loader, ModuleName, OcrLine, OcrWord, OutFile, RunResult, WasmSource } from "./engine.ts";
-export { GLM_DIR, MODEL_PACKS, isModelPackId, megabytes, modelMissing, modelPackIds, packBytes, packOf, servedFiles, sha256Hex } from "./models.ts";
+export { MODEL_PACKS, isModelPackId, megabytes, modelMissing, modelPackIds, packBytes, packOf, servedFiles, sha256Hex } from "./models.ts";
 export type { ModelFile, ModelName, ModelPack, ModelPackId } from "./models.ts";
-export { glmRecognizer } from "./glm.ts";
-export type { GlmRecognizer, Transformers } from "./glm.ts";
 export { EngineError, toEngineError } from "./errors.ts";
 export type { ErrorCode } from "./errors.ts";
 export { categories, outputName, toolById, tools, withDefaults } from "./tools.ts";

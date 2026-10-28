@@ -298,13 +298,7 @@ pub fn extract_text(
             s.text = s.text.trim_end().to_string();
         }
         dev.spans.retain(|s| !s.text.trim().is_empty());
-        out.push((
-            p,
-            PageText {
-                spans: dev.spans,
-                markdown: None,
-            },
-        ));
+        out.push((p, PageText { spans: dev.spans }));
     }
     Ok(out)
 }

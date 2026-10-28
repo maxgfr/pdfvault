@@ -49,10 +49,7 @@ export function About() {
       <p>
         A Content Security Policy only lets this page connect to its own address, forbids inline and third-party scripts,
         forms and plugins, and requires Trusted Types. There are no analytics, fonts or scripts from anywhere else. Open
-        your browser's network tab while you work: after the page loads, nothing goes out. The one exception is an OCR
-        model you choose to download from Hugging Face (GLM-OCR, too large to serve from here): the policy also allows
-        huggingface.co and its download servers, and the page fetches the model's files from there only after you agree.
-        Those requests carry no file of yours; your documents never leave this device.
+        your browser's network tab while you work: after the page loads, nothing goes out.
       </p>
       <h2>Offline</h2>
       <p>
@@ -64,9 +61,7 @@ export function About() {
       <p>
         Text recognition (OCR) needs a model that is not part of the app. The first time a tool needs it, pdfvault asks
         before downloading it from this site; it is checked against a fixed checksum and kept here, so OCR works offline
-        afterwards. GLM-OCR, an optional, much larger model that reads harder pages and writes formulas as LaTeX, comes from Hugging Face
-        the same way, and runs on your graphics card (WebGPU). Delete them whenever you like: each is downloaded again,
-        after asking, the next time.
+        afterwards. Delete it whenever you like: it is downloaded again, after asking, the next time.
       </p>
       <StoredModels />
       <h2>Verifiable</h2>
@@ -79,8 +74,7 @@ export function About() {
       <ul>
         <li>
           OCR reads 50 languages: Latin scripts with their accents, Chinese and Japanese, written horizontally. Its models are
-          PP-OCRv6 (Apache-2.0, PaddlePaddle). GLM-OCR (MIT, Z.ai, run with Transformers.js and ONNX Runtime) only writes
-          Markdown, text and EPUB: it gives no word positions for a searchable PDF, and needs WebGPU on a computer.
+          PP-OCRv6 (Apache-2.0, PaddlePaddle).
         </li>
         <li>The “extreme” compression level turns every page into an image: text is no longer selectable.</li>
         <li>Fonts are not subset, so text-heavy PDFs shrink less than image-heavy ones.</li>

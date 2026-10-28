@@ -3,7 +3,6 @@ import initOcr, * as ocr from "../wasm/ocr/ocr.js";
 import initRender, * as render from "../wasm/render/render.js";
 import { EngineError, toEngineError } from "./errors.ts";
 import { BUNDLED_FONTS, type FontFile, type FontKey } from "./fonts.ts";
-import type { GlmRecognizer } from "./glm.ts";
 import type { ModelName } from "./models.ts";
 
 export type ModuleName = "core" | "render" | "ocr";
@@ -20,11 +19,6 @@ export interface Loader {
   font(name: FontFile): Promise<Uint8Array>;
   /** A font installed on this computer with a face of this PostScript name (the CLI only). */
   systemFont?(postscriptName: string): Promise<Uint8Array | null>;
-  /**
-   * GLM-OCR, where this platform can run it. Throws `model_missing` (pack
-   * `glm`) when it is not downloaded, `unsupported` when it cannot run here.
-   */
-  glm?(): Promise<GlmRecognizer>;
 }
 
 export interface OutFile {
@@ -64,7 +58,6 @@ export class Engine {
   #loader: Loader;
   #ready: Partial<Record<ModuleName, Promise<void>>> = {};
   #fonts: Partial<Record<FontKey, Promise<Uint8Array>>> = {};
-  #glm: Promise<GlmRecognizer> | undefined;
 
   constructor(loader: Loader) {
     this.#loader = loader;
@@ -119,22 +112,6 @@ export class Engine {
     await this.#load("ocr");
     try {
       return JSON.parse(ocr.recognize(pixels, width, height)) as OcrLine[];
-    } catch (e) {
-      throw toEngineError(e);
-    }
-  }
-
-  /** Read a page with GLM-OCR (loaded on first use): its text as Markdown, without positions. */
-  async glm(rgba: Uint8Array, width: number, height: number): Promise<string> {
-    const load = this.#loader.glm;
-    if (!load) throw new EngineError("unsupported", "GLM-OCR does not run here; use the default text recognition");
-    this.#glm ??= load().catch((e: unknown) => {
-      this.#glm = undefined;
-      throw e instanceof EngineError ? e : new EngineError("internal", `could not load GLM-OCR: ${String(e)}`);
-    });
-    const glm = await this.#glm;
-    try {
-      return await glm.recognize(rgba, width, height);
     } catch (e) {
       throw toEngineError(e);
     }

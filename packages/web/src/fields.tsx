@@ -11,15 +11,12 @@ interface Props {
   value: Options[string];
   onChange: (value: Options[string]) => void;
   idPrefix: string;
-  /** Choices this browser cannot run, each with the reason (shown under the field). */
-  unavailable?: Record<string, string>;
 }
 
-export function FieldInput({ field, value, onChange, idPrefix, unavailable = {} }: Props) {
+export function FieldInput({ field, value, onChange, idPrefix }: Props) {
   const id = `${idPrefix}-${field.name}`;
-  const reasons = Object.values(unavailable);
-  const help = field.help || reasons.length ? <small id={`${id}-help`}>{[...reasons, field.help].filter(Boolean).join(" ")}</small> : null;
-  const describedBy = help ? `${id}-help` : undefined;
+  const help = field.help ? <small id={`${id}-help`}>{field.help}</small> : null;
+  const describedBy = field.help ? `${id}-help` : undefined;
 
   if (field.kind === "boolean") {
     return (
@@ -37,9 +34,8 @@ export function FieldInput({ field, value, onChange, idPrefix, unavailable = {} 
       control = (
         <select id={id} value={String(value ?? field.default)} onChange={(e) => onChange(e.currentTarget.value)} aria-describedby={describedBy}>
           {field.choices.map((c) => (
-            <option key={c.value} value={c.value} disabled={c.value in unavailable}>
+            <option key={c.value} value={c.value}>
               {c.label}
-              {c.value in unavailable ? " (not available here)" : ""}
             </option>
           ))}
         </select>
