@@ -108,10 +108,12 @@ interface Props {
   /** Extra controls above the results, given every outcome. */
   resultsActions?: (outcomes: Outcome[]) => ReactNode;
   onDownload?: (file: Produced, outcome: Outcome) => void;
+  /** Shown above the first tool's fields, given its options and a way to change them. */
+  preview?: (options: Options, change: (patch: Options) => void) => ReactNode;
 }
 
 /** A tool's form, the run, its progress and its results. */
-export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, resultsActions, onDownload }: Props) {
+export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, resultsActions, onDownload, preview }: Props) {
   const [options, setOptions] = useState<Record<string, Options>>(() => Object.fromEntries(groups.map((g) => [g.tool.id, withDefaults(g.tool, {})])));
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<{ label: string; fraction: number | null } | null>(null);
@@ -216,6 +218,12 @@ export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, res
           if (ready && !missing.length && !running) void run();
         }}
       >
+        {groups[0] && preview
+          ? preview(optionsOf(groups[0].tool), (patch) => {
+              const t = groups[0]!.tool;
+              setOptions((all) => ({ ...all, [t.id]: { ...(all[t.id] ?? withDefaults(t, {})), ...patch } }));
+            })
+          : null}
         {groups.map((g) => {
           const o = optionsOf(g.tool);
           const passwordField = g.tool.fields.find((f) => f.name === "password");
