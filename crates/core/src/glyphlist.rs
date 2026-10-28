@@ -1550,6 +1550,16 @@ fn name_at(i: usize) -> &'static str {
     &NAMES[start..end]
 }
 
+/// A glyph name the Adobe Glyph List gives this Unicode value, if any
+/// (not the `f_i` spellings of ligatures, which the list itself lacks).
+#[cfg_attr(not(feature = "typeset"), allow(dead_code))]
+pub(crate) fn name_of(u: u16) -> Option<&'static str> {
+    (0..CODES.len())
+        .filter(|&i| CODES[i] == u)
+        .map(name_at)
+        .find(|n| !n.contains('_'))
+}
+
 /// The Unicode value the Adobe Glyph List gives a glyph name.
 pub(crate) fn unicode_of(name: &str) -> Option<u16> {
     let (mut lo, mut hi) = (0, OFFSETS.len());

@@ -1,4 +1,4 @@
-import type { CompressReport } from "@pdfvault/engine";
+import type { CompressReport, PdfaReport } from "@pdfvault/engine";
 import { useEffect, useMemo } from "react";
 
 export const bytes = (n: number) =>
@@ -108,9 +108,35 @@ function Compare({ r, images }: { r: { identical: boolean; pages: Diff[] }; imag
   );
 }
 
+function Pdfa({ r }: { r: PdfaReport }) {
+  return (
+    <div className="report">
+      <p className="verdict">{r.conformant ? "PDF/A-2b, ready to archive." : "Not PDF/A yet, so the file does not claim it. What stands in the way:"}</p>
+      {r.blockers.length ? (
+        <ul className="facts">
+          {r.blockers.map((b) => (
+            <li key={b}>{b}</li>
+          ))}
+        </ul>
+      ) : null}
+      <ul className="facts">
+        {r.fonts.map((f) => (
+          <li key={f.font}>
+            {f.font} embedded as {f.embedded}
+          </li>
+        ))}
+        {r.removed.map((x) => (
+          <li key={x}>removed {x.replace(":", " ×")}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function Report({ toolId, report, files }: { toolId: string; report: unknown; files: { name: string; bytes: Uint8Array }[] }) {
   if (report === null || report === undefined) return null;
   if (toolId === "compress") return <Compress r={report as CompressReport} />;
+  if (toolId === "pdfa") return <Pdfa r={report as PdfaReport} />;
   if (toolId === "compare") return <Compare r={report as { identical: boolean; pages: Diff[] }} images={files.filter((f) => f.name.endsWith(".png"))} />;
   if (toolId === "info") {
     const r = report as Record<string, unknown> & { metadata: Record<string, string>; security: Record<string, unknown> };

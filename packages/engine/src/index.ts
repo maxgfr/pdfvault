@@ -8,7 +8,7 @@ export { EngineError, toEngineError } from "./errors.ts";
 export type { ErrorCode } from "./errors.ts";
 export { categories, outputName, toolById, tools, withDefaults } from "./tools.ts";
 export type { Category, Field, InputKind, Options, Progress, Tool } from "./tools.ts";
-export type { CompressReport, ImageReport } from "./reports.ts";
+export type { CompressReport, ImageReport, PdfaReport } from "./reports.ts";
 export { NOTE_SIZE, TEXT_ASCENT, TEXT_LINE, missingCharacters, parseEdits } from "./edit.ts";
 export type { EditItem, EditOps, EditReport, FontRef, FormField, PageObject, Paragraph, TextRun } from "./edit.ts";
 export { previewPages } from "./preview.ts";

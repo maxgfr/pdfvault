@@ -130,6 +130,20 @@ describe("running", () => {
     expect(cli(["combine", "edits-missing.txt"]).code).toBe(2);
   });
 
+  test("pdfa embeds the standard fonts and reports what it changed", async () => {
+    const r = cli(["pdfa", "text-3.pdf", "--json"]);
+    expect(r.code).toBe(0);
+    const res = JSON.parse(r.out).results[0];
+    expect(res.outputs[0].path).toBe(join(dir, "text-3-pdfa.pdf"));
+    expect(res.report).toMatchObject({ pages: 3, conformant: true, blockers: [], fonts: [{ font: "Helvetica", embedded: "LiberationSans" }] });
+    const out = await Bun.file(res.outputs[0].path).text();
+    expect(out.startsWith("%PDF-1.7")).toBe(true);
+    expect(out).toContain("<pdfaid:part>2</pdfaid:part>");
+    const locked = JSON.parse(cli(["pdfa", "locked.pdf", "--json"]).out).results[0];
+    expect(locked.error.code).toBe("password_required");
+    expect(cli(["pdfa", "locked.pdf", "--password", "secret", "-o", "open-a.pdf"]).code).toBe(0);
+  });
+
   test("edit reads its JSON from @file and takes images after the PDF", async () => {
     const ops = { items: [{ type: "image", page: 0, x: 72, y: 72, w: 120, h: 80, image: 0 }], order: [{ page: 1 }, { page: 0 }] };
     await Bun.write(`${dir}/edits.json`, JSON.stringify(ops));

@@ -19,6 +19,7 @@ pub mod meta;
 pub mod pages;
 pub mod paragraphs;
 pub mod pdf;
+pub mod pdfa;
 pub mod pdffont;
 pub mod raster;
 pub mod redact;

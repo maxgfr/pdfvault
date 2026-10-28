@@ -54,7 +54,7 @@ fn name_of(font: &FontRef, id: StringId) -> Option<String> {
         .map(|s| s.chars().collect())
 }
 
-fn metrics_of(font: &FontRef) -> Metrics {
+pub(crate) fn metrics_of(font: &FontRef) -> Metrics {
     font.metrics(Size::unscaled(), LocationRef::default())
 }
 
@@ -75,7 +75,7 @@ pub fn face_index(data: &[u8], name: &str) -> u32 {
         .unwrap_or(0)
 }
 
-fn postscript_name(font: &FontRef) -> String {
+pub(crate) fn postscript_name(font: &FontRef) -> String {
     let name = name_of(font, StringId::POSTSCRIPT_NAME).unwrap_or_else(|| "Font".into());
     let clean: String = name
         .chars()
