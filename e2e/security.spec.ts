@@ -100,3 +100,13 @@ test("the OCR model is downloaded only when asked, works offline, and can be del
   await page.getByRole("button", { name: "OCR (searchable PDF)", exact: true }).click();
   await expect(page.getByRole("button", { name: "Download and continue" })).toBeVisible({ timeout: 60_000 });
 });
+
+test("the OCR model downloads on an origin that reports itself over quota", async ({ page }) => {
+  // maxgfr.github.io hosts other apps: storage.estimate() counts them all and
+  // can report more used than allowed. That must not stop the download.
+  await page.addInitScript(() => {
+    navigator.storage.estimate = async () => ({ quota: 2 ** 31, usage: 2 ** 32 });
+  });
+  await page.goto("./");
+  await runTool(page, "ocr", "OCR (searchable PDF)", [["scan.pdf"]], { Pages: "1" });
+});
