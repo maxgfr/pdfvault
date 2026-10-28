@@ -3,7 +3,7 @@
 
 import { useSyncExternalStore } from "react";
 import { runJob } from "../runner.ts";
-import { classify, isImage, isPdf, workspace } from "../workspace.ts";
+import { classify, isImage, isPdf, redrawAsJpeg, workspace } from "../workspace.ts";
 
 /** Corners in pixels of the upright photo: top-left, top-right, bottom-right, bottom-left. */
 export type Quad = [number, number][];
@@ -225,15 +225,9 @@ export function useScanFilter(): Filter {
 export async function photoBytes(file: Blob, name: string): Promise<Uint8Array> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (isImage(bytes)) return bytes;
-  try {
-    const bitmap = await createImageBitmap(file);
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-    canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
-    bitmap.close();
-    return new Uint8Array(await (await canvas.convertToBlob({ type: "image/jpeg", quality: 0.92 })).arrayBuffer());
-  } catch {
-    throw new Error(classify(name, bytes).problem ?? "This file is not a photo.");
-  }
+  const jpeg = await redrawAsJpeg(file);
+  if (jpeg) return jpeg;
+  throw new Error(classify(name, bytes).problem ?? "This file is not a photo.");
 }
 
 /** Where the service worker leaves files shared to the app (see sw.ts). */

@@ -42,21 +42,41 @@ export function isImage(b: Uint8Array): boolean {
   );
 }
 
+/** HEIC (iPhone) or AVIF: photos in an ISO-BMFF box the engine cannot decode. */
+function isoPhoto(b: Uint8Array): "heic" | "avif" | undefined {
+  if (!has(b, 4, "ftyp")) return undefined;
+  const brand = String.fromCharCode(...b.subarray(8, 12));
+  if (/^(heic|heix|hevc|heim|heis|mif1|msf1)$/.test(brand)) return "heic";
+  if (/^avi[fs]$/.test(brand)) return "avif";
+  return undefined;
+}
+
+/** Redraw a photo as JPEG with the browser's own decoder; null where it cannot read it. */
+export async function redrawAsJpeg(file: Blob): Promise<Uint8Array | null> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return new Uint8Array(await (await canvas.convertToBlob({ type: "image/jpeg", quality: 0.92 })).arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
 /** What kind of file this is, and for the ones we cannot read, why. */
 export function classify(name: string, b: Uint8Array): { kind: Kind; problem?: string } {
   if (isPdf(b)) return { kind: "pdf" };
   if (isImage(b)) return { kind: "image" };
   const ext = name.toLowerCase().split(".").pop() ?? "";
-  if (has(b, 4, "ftyp")) {
-    const brand = String.fromCharCode(...b.subarray(8, 12));
-    if (/^(heic|heix|hevc|heim|heis|mif1|msf1)$/.test(brand)) {
-      return {
-        kind: "unsupported",
-        problem: "HEIC photos cannot be read here yet. Export it as JPEG (on iPhone: Settings › Camera › Formats › Most Compatible).",
-      };
-    }
-    if (/^avi[fs]$/.test(brand)) return { kind: "unsupported", problem: "AVIF images cannot be read here yet. Save it as JPEG or PNG first." };
+  const photo = isoPhoto(b);
+  if (photo === "heic") {
+    return {
+      kind: "unsupported",
+      problem: "This browser cannot read HEIC photos. Open pdfvault in Safari, or export it as JPEG (on iPhone: Settings › Camera › Formats › Most Compatible).",
+    };
   }
+  if (photo === "avif") return { kind: "unsupported", problem: "This browser cannot read AVIF images. Save it as JPEG or PNG first." };
   if (has(b, 0, "PK\x03\x04")) {
     if (/^(docx?|xlsx?|pptx?|odt|ods|odp|pages|key|numbers)$/.test(ext)) {
       return { kind: "unsupported", problem: "Office documents cannot be converted in the browser. Export it to PDF from its app, then drop the PDF." };
@@ -259,5 +279,13 @@ export async function filesFromDrop(dt: DataTransfer): Promise<File[]> {
 }
 
 export async function readFiles(list: Iterable<File>): Promise<{ name: string; bytes: Uint8Array }[]> {
-  return Promise.all([...list].map(async (f) => ({ name: f.name || "pasted", bytes: new Uint8Array(await f.arrayBuffer()) })));
+  return Promise.all(
+    [...list].map(async (f) => {
+      const name = f.name || "pasted";
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      // HEIC (Safari) and AVIF become JPEG where this browser decodes them.
+      const jpeg = isoPhoto(bytes) ? await redrawAsJpeg(f) : null;
+      return jpeg ? { name: name.replace(/(\.[^.]*)?$/, ".jpg"), bytes: jpeg } : { name, bytes };
+    }),
+  );
 }

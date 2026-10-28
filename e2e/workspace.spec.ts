@@ -21,6 +21,23 @@ test("one compress entry on the home page, before any file", async ({ page }) =>
   await expect(page.getByRole("link", { name: /^Compress PDF/ })).toHaveCount(1);
 });
 
+// A 16×16 AVIF: Chromium decodes it, so it takes the path a HEIC takes in Safari.
+const AVIF =
+  "AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAAD5bWV0YQAAAAAAAAAvaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAFBpY3R1cmVIYW5kbGVyAAAAAA5waXRtAAAAAAABAAAAHmlsb2MAAAAARAAAAQABAAAAAQAAASEAAAAkAAAAKGlpbmYAAAAAAAEAAAAaaW5mZQIAAAAAAQAAYXYwMUNvbG9yAAAAAGppcHJwAAAAS2lwY28AAAAUaXNwZQAAAAAAAAAQAAAAEAAAABBwaXhpAAAAAAMICAgAAAAMYXYxQ4EADAAAAAATY29scm5jbHgAAgACAAIAAAAAF2lwbWEAAAAAAAAAAQABBAECgwQAAAAsbWRhdAoKAgAABUz/xq+QBDIWEACXgBBAggAAEABcEytNbG+TY8nR6A==";
+
+test("photos the browser decodes become JPEG; a HEIC it cannot says what to do", async ({ page }) => {
+  await page.goto("./");
+  await drop(page, [
+    { name: "IMG_0001.avif", mimeType: "image/avif", buffer: Buffer.from(AVIF, "base64") },
+    // Chromium has no HEIC decoder: only the brand matters here.
+    { name: "IMG_0002.HEIC", mimeType: "image/heic", buffer: Buffer.from("\0\0\0\x18ftypheic\0\0\0\0mif1heic") },
+  ]);
+  await expect(page.locator(".ws-file")).toHaveCount(2);
+  await expect(card(page, "IMG_0001.jpg").getByRole("checkbox")).toBeEnabled();
+  await expect(card(page, "IMG_0002.HEIC")).toContainText("This browser cannot read HEIC photos. Open pdfvault in Safari");
+  await expect(card(page, "IMG_0002.HEIC").getByRole("checkbox")).toBeDisabled();
+});
+
 test("a mixed drop: compress each file with the right tool, keep the results, chain", async ({ page }) => {
   const w = await watch(page);
   await page.goto("./");
