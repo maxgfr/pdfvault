@@ -1,14 +1,14 @@
-//! Markdown → PDF. CommonMark with tables, task lists and strikethrough,
-//! laid out on A4 or Letter pages with the bundled Liberation fonts: text is
+//! Markdown → PDF. The document is read by [`crate::mdparse`] (CommonMark
+//! with GFM tables and strikethrough, no other dependency) and laid out on A4 or Letter pages with the bundled Liberation fonts: text is
 //! shaped and embedded as subsets, so it can be selected, copied and searched.
 //! Headings become bookmarks. Characters no font has are drawn as "?" and
 //! counted in the report rather than failing the whole document.
 
 use crate::error::{Error, Result};
+use crate::mdparse::{self, Align, Node, Piece, Style};
 use crate::pdf::{self, n};
 use crate::typeset::{Line, Typesetter};
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream, dictionary};
-use pulldown_cmark::{Alignment, Event, HeadingLevel, Options as Md, Parser, Tag, TagEnd};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -52,21 +52,6 @@ pub struct MdPdfReport {
     /// Characters no font could draw, each replaced with "?".
     pub missing: String,
     pub replaced: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-struct Style {
-    bold: bool,
-    italic: bool,
-    mono: bool,
-    link: bool,
-}
-
-/// A run of inline text in one style; `"\n"` alone is a hard line break.
-#[derive(Debug, Clone)]
-struct Piece {
-    text: String,
-    style: Style,
 }
 
 /// One word (or word fragment) measured and ready to draw.
@@ -558,7 +543,7 @@ impl<'a> Writer<'a> {
         &mut self,
         cells: &[Vec<Vec<Word>>],
         header: bool,
-        align: &[Alignment],
+        align: &[Align],
         widths: &[f32],
         x: f32,
         size: f32,
@@ -589,8 +574,8 @@ impl<'a> Writer<'a> {
                     let baseline = top - pad - (j - i) as f32 * lh - size;
                     let lw = Self::line_width(line);
                     let dx = match align.get(c) {
-                        Some(Alignment::Right) => (w - 2.0 * pad - lw).max(0.0),
-                        Some(Alignment::Center) => ((w - 2.0 * pad - lw) / 2.0).max(0.0),
+                        Some(Align::Right) => (w - 2.0 * pad - lw).max(0.0),
+                        Some(Align::Center) => ((w - 2.0 * pad - lw) / 2.0).max(0.0),
                         _ => 0.0,
                     };
                     self.draw_words(line, cx + pad + dx, baseline)?;
@@ -778,20 +763,10 @@ fn column_widths(natural: &[f32], minimum: &[f32], width: f32) -> Vec<f32> {
 
 #[derive(Default)]
 struct Table {
+    /// The header first when `header` is set.
     rows: Vec<Vec<Vec<Piece>>>,
-    align: Vec<Alignment>,
+    align: Vec<Align>,
     header: bool,
-}
-
-enum Block {
-    Heading(usize),
-    Paragraph,
-    Item,
-}
-
-struct ListState {
-    ordered: bool,
-    next: u64,
 }
 
 /// Typeset `md` (UTF-8) with the fonts in `fonts`, keyed as in [`MdPdfOptions::bundled`].
@@ -852,267 +827,144 @@ pub fn md2pdf(md: &[u8], fonts: &[Vec<u8>], o: &MdPdfOptions) -> Result<(Vec<u8>
         replaced: 0,
         outline: vec![],
     };
-    let full = w - 2.0 * o.margin;
-    let mut style = Style::default();
-    let mut inline: Vec<Piece> = vec![];
-    let mut blocks: Vec<Block> = vec![];
-    let mut lists: Vec<ListState> = vec![];
-    let mut quotes = 0usize;
-    let mut marker: Option<String> = None;
-    let mut code: Option<String> = None;
-    let mut table: Option<Table> = None;
-    let mut cell: Vec<Piece> = vec![];
-    let mut first_heading = String::new();
-
-    let indent =
-        |lists: &Vec<ListState>, quotes: usize| 18.0 * lists.len() as f32 + 14.0 * quotes as f32;
-    let push = |inline: &mut Vec<Piece>,
-                cell: &mut Vec<Piece>,
-                table: &Option<Table>,
-                text: String,
-                style: Style| {
-        let target = if table.is_some() { cell } else { inline };
-        match target.last_mut() {
-            Some(p) if p.style == style && p.text != "\n" && text != "\n" => p.text.push_str(&text),
-            _ => target.push(Piece { text, style }),
-        }
-    };
-
-    // Lay out what has accumulated in `inline` as a paragraph of the current block.
-    macro_rules! flush {
-        () => {{
-            if inline
-                .iter()
-                .any(|p| !p.text.trim().is_empty() || p.text == "\n")
-            {
-                let ind = indent(&lists, quotes);
-                let bars: Vec<f32> = (0..quotes).map(|q| o.margin + 14.0 * q as f32).collect();
-                let m = marker.take().map(|m| (m, o.margin + ind - 14.0));
-                wr.paragraph(&inline, wr.body, o.margin + ind, full - ind, m, &bars)?;
-                wr.y -= if lists.is_empty() {
-                    wr.body * 0.55
-                } else {
-                    wr.body * 0.15
-                };
-            }
-            inline.clear();
-        }};
-    }
-
-    let opts = Md::ENABLE_TABLES | Md::ENABLE_STRIKETHROUGH | Md::ENABLE_TASKLISTS;
-    for ev in Parser::new_ext(text, opts) {
-        match ev {
-            Event::Start(tag) => match tag {
-                Tag::Heading { level, .. } => {
-                    flush!();
-                    blocks.push(Block::Heading(match level {
-                        HeadingLevel::H1 => 1,
-                        HeadingLevel::H2 => 2,
-                        HeadingLevel::H3 => 3,
-                        HeadingLevel::H4 => 4,
-                        HeadingLevel::H5 => 5,
-                        HeadingLevel::H6 => 6,
-                    }));
-                }
-                Tag::Paragraph => blocks.push(Block::Paragraph),
-                Tag::BlockQuote(_) => {
-                    flush!();
-                    quotes += 1;
-                }
-                Tag::CodeBlock(_) => {
-                    flush!();
-                    code = Some(String::new());
-                }
-                Tag::List(start) => {
-                    flush!();
-                    lists.push(ListState {
-                        ordered: start.is_some(),
-                        next: start.unwrap_or(1),
-                    });
-                }
-                Tag::Item => {
-                    flush!();
-                    blocks.push(Block::Item);
-                    if let Some(l) = lists.last_mut() {
-                        marker = Some(if l.ordered {
-                            let m = format!("{}.", l.next);
-                            l.next += 1;
-                            m
-                        } else {
-                            ["•", "–", "·"][(lists.len() - 1) % 3].to_string()
-                        });
-                    }
-                }
-                Tag::Table(align) => {
-                    flush!();
-                    table = Some(Table {
-                        align,
-                        ..Table::default()
-                    });
-                }
-                Tag::TableHead => {
-                    if let Some(t) = table.as_mut() {
-                        t.header = true;
-                        t.rows.push(vec![]);
-                    }
-                }
-                Tag::TableRow => {
-                    if let Some(t) = table.as_mut() {
-                        t.rows.push(vec![]);
-                    }
-                }
-                Tag::TableCell => cell.clear(),
-                Tag::Emphasis => style.italic = true,
-                Tag::Strong => style.bold = true,
-                Tag::Link { .. } => style.link = true,
-                Tag::Image { .. } => {
-                    push(
-                        &mut inline,
-                        &mut cell,
-                        &table,
-                        "[image : ".into(),
-                        Style {
-                            italic: true,
-                            ..style
-                        },
-                    );
-                    style.italic = true;
-                }
-                _ => {}
-            },
-            Event::End(tag) => match tag {
-                TagEnd::Heading(_) => {
-                    if let Some(Block::Heading(level)) = blocks.pop() {
-                        if first_heading.is_empty() {
-                            first_heading = inline
-                                .iter()
-                                .map(|p| p.text.as_str())
-                                .collect::<String>()
-                                .trim()
-                                .to_string();
-                        }
-                        let ind = indent(&lists, quotes);
-                        wr.heading(&inline, level, o.margin + ind, full - ind)?;
-                        inline.clear();
-                    }
-                }
-                TagEnd::Paragraph => {
-                    blocks.pop();
-                    flush!();
-                }
-                TagEnd::BlockQuote(_) => {
-                    flush!();
-                    quotes = quotes.saturating_sub(1);
-                }
-                TagEnd::CodeBlock => {
-                    if let Some(c) = code.take() {
-                        let ind = indent(&lists, quotes);
-                        wr.code_block(&c, o.margin + ind, full - ind)?;
-                    }
-                }
-                TagEnd::List(_) => {
-                    flush!();
-                    lists.pop();
-                    if lists.is_empty() {
-                        wr.y -= wr.body * 0.4;
-                    }
-                }
-                TagEnd::Item => {
-                    flush!();
-                    blocks.pop();
-                    marker = None;
-                }
-                TagEnd::Table => {
-                    if let Some(mut t) = table.take() {
-                        // `| | |` headers only exist to satisfy the syntax: drop them.
-                        let empty = |row: &Vec<Vec<Piece>>| {
-                            row.iter()
-                                .all(|c| c.iter().all(|p| p.text.trim().is_empty()))
-                        };
-                        if t.header && t.rows.first().is_some_and(empty) {
-                            t.rows.remove(0);
-                            t.header = false;
-                        }
-                        let ind = indent(&lists, quotes);
-                        wr.table(&t, o.margin + ind, full - ind)?;
-                    }
-                }
-                TagEnd::TableCell => {
-                    if let Some(t) = table.as_mut()
-                        && let Some(row) = t.rows.last_mut()
-                    {
-                        row.push(std::mem::take(&mut cell));
-                    }
-                }
-                TagEnd::Emphasis => style.italic = false,
-                TagEnd::Strong => style.bold = false,
-                TagEnd::Link => style.link = false,
-                TagEnd::Image => {
-                    style.italic = false;
-                    push(
-                        &mut inline,
-                        &mut cell,
-                        &table,
-                        "]".into(),
-                        Style {
-                            italic: true,
-                            ..style
-                        },
-                    );
-                }
-                _ => {}
-            },
-            Event::Text(t) => {
-                if let Some(c) = code.as_mut() {
-                    c.push_str(&t);
-                } else {
-                    push(&mut inline, &mut cell, &table, t.to_string(), style);
-                }
-            }
-            Event::Code(t) => push(
-                &mut inline,
-                &mut cell,
-                &table,
-                t.to_string(),
-                Style {
-                    mono: true,
-                    ..style
-                },
-            ),
-            Event::SoftBreak => push(&mut inline, &mut cell, &table, " ".into(), style),
-            Event::HardBreak => push(&mut inline, &mut cell, &table, "\n".into(), style),
-            Event::Rule => {
-                flush!();
-                wr.need(wr.body);
-                let y = wr.y - wr.body * 0.5;
-                wr.hline(o.margin, o.margin + full, y, 0.6);
-                wr.y -= wr.body;
-            }
-            Event::TaskListMarker(done) => push(
-                &mut inline,
-                &mut cell,
-                &table,
-                if done { "[x] ".into() } else { "[ ] ".into() },
-                Style {
-                    mono: true,
-                    ..style
-                },
-            ),
-            Event::FootnoteReference(r) => {
-                push(&mut inline, &mut cell, &table, format!("[{r}]"), style)
-            }
-            // Raw HTML (comments, tags) has no place on the page.
-            Event::Html(_) | Event::InlineHtml(_) => {}
-            _ => {}
-        }
-    }
-    flush!();
+    let nodes = mdparse::parse(text);
+    render(
+        &mut wr,
+        &nodes,
+        o.margin,
+        w - 2.0 * o.margin,
+        &[],
+        None,
+        false,
+    )?;
     let title = if o.title.trim().is_empty() {
-        first_heading
+        first_heading(&nodes)
     } else {
         o.title.trim().to_string()
     };
     wr.finish(&title, o.page_numbers)
+}
+
+fn plain(p: &[Piece]) -> String {
+    let s: String = p.iter().map(|x| x.text.as_str()).collect();
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn first_heading(nodes: &[Node]) -> String {
+    nodes
+        .iter()
+        .find_map(|n| match n {
+            Node::Heading(_, p) => Some(plain(p)),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// Lay out `nodes` in the column at `x`, `width` wide. `marker` (a list
+/// bullet and its x) goes on the first line; `bars` are the quote bars.
+fn render(
+    wr: &mut Writer,
+    nodes: &[Node],
+    x: f32,
+    width: f32,
+    bars: &[f32],
+    mut marker: Option<(String, f32)>,
+    in_list: bool,
+) -> Result<()> {
+    for node in nodes {
+        // A bullet whose item starts with something else than text sits on its own line.
+        if marker.is_some() && !matches!(node, Node::Paragraph(_) | Node::Heading(..)) {
+            wr.paragraph(&[], wr.body, x, width, marker.take(), bars)?;
+        }
+        match node {
+            Node::Heading(level, p) => {
+                if let Some((m, mx)) = marker.take() {
+                    wr.paragraph(
+                        &[Piece {
+                            text: m,
+                            style: Style::default(),
+                        }],
+                        wr.body,
+                        mx,
+                        width,
+                        None,
+                        bars,
+                    )?;
+                }
+                wr.heading(p, *level, x, width)?;
+            }
+            Node::Paragraph(p) => {
+                wr.paragraph(p, wr.body, x, width, marker.take(), bars)?;
+                wr.y -= if in_list {
+                    wr.body * 0.15
+                } else {
+                    wr.body * 0.55
+                };
+            }
+            Node::Code(code) => wr.code_block(code, x, width)?,
+            Node::Rule => {
+                wr.need(wr.body);
+                let y = wr.y - wr.body * 0.5;
+                wr.hline(x, x + width, y, 0.6);
+                wr.y -= wr.body;
+            }
+            Node::Quote(children) => {
+                let mut b = bars.to_vec();
+                b.push(x);
+                render(wr, children, x + 14.0, width - 14.0, &b, None, in_list)?;
+            }
+            Node::List {
+                ordered,
+                start,
+                items,
+            } => {
+                for (k, item) in items.iter().enumerate() {
+                    let m = if *ordered {
+                        format!("{}.", start + k as u64)
+                    } else {
+                        let level = (x - wr.margin) / 18.0;
+                        ["•", "–", "·"][(level.round() as usize) % 3].to_string()
+                    };
+                    render(
+                        wr,
+                        item,
+                        x + 18.0,
+                        width - 18.0,
+                        bars,
+                        Some((m, x + 4.0)),
+                        true,
+                    )?;
+                }
+                if !in_list {
+                    wr.y -= wr.body * 0.4;
+                }
+            }
+            Node::Table {
+                align,
+                header,
+                rows,
+            } => {
+                let mut t = Table {
+                    rows: vec![],
+                    align: align.clone(),
+                    header: false,
+                };
+                // `| | |` headers only exist to satisfy the syntax: drop them.
+                if let Some(h) = header
+                    && h.iter().any(|c| !plain(c).is_empty())
+                {
+                    t.rows.push(h.clone());
+                    t.header = true;
+                }
+                t.rows.extend(rows.iter().cloned());
+                wr.table(&t, x, width)?;
+            }
+        }
+    }
+    if let Some(m) = marker {
+        wr.paragraph(&[], wr.body, x, width, Some(m), bars)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
