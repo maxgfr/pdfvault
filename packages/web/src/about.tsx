@@ -57,7 +57,8 @@ export function About() {
       <h2>Offline</h2>
       <p>
         A service worker keeps the app on your device after the first visit, so it works in airplane mode. The page renderer
-        and the fonts are cached the first time you use a tool that needs them.
+        and the fonts are cached the first time you use a tool that needs them. Installed, pdfvault can open PDFs and photos
+        from your system's Open with menu or share sheet: the service worker hands them to the page without any server.
       </p>
       <h2>Stored on this device</h2>
       <p>
