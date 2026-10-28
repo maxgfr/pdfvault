@@ -19,11 +19,16 @@ const INBOX = "pdfvault-inbox";
 const MODELS = "pdfvault-models";
 const SHARE_TARGET = abs("./share-target");
 
+// Straight from the network, past the browser's HTTP cache: GitHub Pages
+// sends max-age=600, and a version cache filled with the previous deploy's
+// index.html (or wasm, whose names carry no hash) keeps users on it.
+const fresh = (url: string) => new Request(url, { cache: "reload" });
+
 sw.addEventListener("install", (event: ExtendableEvent) => {
   event.waitUntil(
     caches
       .open(CACHE)
-      .then((c) => c.addAll(precache.map(abs)))
+      .then((c) => c.addAll(precache.map((p) => fresh(abs(p)))))
       .then(() => sw.skipWaiting()),
   );
 });
@@ -70,8 +75,9 @@ sw.addEventListener("fetch", (event: FetchEvent) => {
       const cache = await caches.open(CACHE);
       const hit = await cache.match(key);
       if (hit) return hit;
-      const res = await fetch(req);
-      if (res.ok && (lazySet.has(key) || key === abs("./"))) await cache.put(key, res.clone());
+      const keep = lazySet.has(key) || key === abs("./");
+      const res = await fetch(keep && req.mode !== "navigate" ? fresh(key) : req);
+      if (res.ok && keep) await cache.put(key, res.clone());
       return res;
     })(),
   );
