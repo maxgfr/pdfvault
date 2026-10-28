@@ -18,8 +18,8 @@ import serifBoldItalic from "../../../models/fonts/LiberationSerif-BoldItalic.tt
 import serifItalic from "../../../models/fonts/LiberationSerif-Italic.ttf" with { type: "file" };
 import serifRegular from "../../../models/fonts/LiberationSerif-Regular.ttf" with { type: "file" };
 import { join, sep } from "node:path";
-import { EngineError, MODEL_PACKS, glmRecognizer, megabytes, packOf, type FontFile, type Loader, type ModelPackId, type Transformers } from "@pdfvault/engine";
-import { downloadBytes, installed, modelDir, runtimeDir } from "./models.ts";
+import { MODEL_PACKS, glmRecognizer, modelMissing, packOf, type FontFile, type Loader, type ModelPackId, type Transformers } from "@pdfvault/engine";
+import { downloadBytes, modelDir, ready, runtimeDir } from "./models.ts";
 import { systemFont } from "./system-fonts.ts";
 
 // The npm bundle gets paths relative to itself, not to the working directory.
@@ -43,12 +43,11 @@ const fonts: Record<FontFile, string> = {
   "LiberationMono-BoldItalic.ttf": path(monoBoldItalic),
 };
 
-const missing = (id: ModelPackId) =>
-  new EngineError("model_missing", `the ${MODEL_PACKS[id].title} model is not downloaded (${megabytes(downloadBytes(id))}): run \`pdfvault models pull ${id}\`, or pass --download`, id);
+const missing = (id: ModelPackId) => modelMissing(id, downloadBytes(id), `run \`pdfvault models pull ${id}\`, or pass --download`);
 
 /** Transformers.js from the runtime `models pull glm` installed, reading only the model folder. */
 async function glm() {
-  if (!(await installed("glm")).complete) throw missing("glm");
+  if (!(await ready("glm"))) throw missing("glm");
   // The pinned version's Node entry, by path: a compiled pdfvault does not resolve packages from other folders.
   const entry = join(runtimeDir(), "node_modules", "@huggingface", "transformers", "dist", "transformers.node.mjs");
   const tf = (await import(entry)) as Transformers & { env: Record<string, unknown> };

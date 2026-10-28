@@ -14,6 +14,13 @@ use rten::Model;
 use rten_tensor::NdTensor;
 use rten_tensor::prelude::*;
 use serde::Serialize;
+use std::borrow::Cow;
+
+/// A model output's values in order: borrowed when laid out contiguously,
+/// as model outputs are, copied otherwise.
+fn contiguous<const N: usize>(t: &NdTensor<f32, N>) -> Cow<'_, [f32]> {
+    t.data().map_or_else(|| t.to_vec().into(), Cow::Borrowed)
+}
 
 /// One recognized word, in pixels of the input image (origin top-left).
 #[derive(Debug, Clone, Serialize)]
@@ -57,15 +64,6 @@ pub struct Ocr {
     classes: Vec<String>,
 }
 
-/// Axis-aligned bounds in input pixels, `x1`/`y1` exclusive.
-#[derive(Debug, Clone, Copy)]
-struct Rect {
-    x0: f32,
-    y0: f32,
-    x1: f32,
-    y1: f32,
-}
-
 /// A box in input pixels, possibly turned: its top-left corner, the unit
 /// direction `u` its lines run in, and its size along `u` (`w`) and across
 /// (`h`, downwards: `u` turned a quarter clockwise).
@@ -104,24 +102,19 @@ impl Quad {
         (x * ux + y * uy, -x * uy + y * ux)
     }
 
-    /// The axis-aligned bounds of the part `a0..a1` along, `b0..b1` across.
-    fn bounds(&self, a0: f32, a1: f32, b0: f32, b1: f32) -> Rect {
+    /// The axis-aligned bounds of the part `a0..a1` along, `b0..b1` across,
+    /// as `(x0, y0, x1, y1)` in input pixels.
+    fn bounds(&self, a0: f32, a1: f32, b0: f32, b1: f32) -> (f32, f32, f32, f32) {
         let corners = [
             self.at(a0, b0),
             self.at(a1, b0),
             self.at(a0, b1),
             self.at(a1, b1),
         ];
-        let mut r = Rect {
-            x0: f32::MAX,
-            y0: f32::MAX,
-            x1: f32::MIN,
-            y1: f32::MIN,
-        };
-        for (x, y) in corners {
-            (r.x0, r.y0, r.x1, r.y1) = (r.x0.min(x), r.y0.min(y), r.x1.max(x), r.y1.max(y));
-        }
-        r
+        corners.into_iter().fold(
+            (f32::MAX, f32::MAX, f32::MIN, f32::MIN),
+            |(x0, y0, x1, y1), (x, y)| (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
+        )
     }
 }
 
@@ -166,7 +159,7 @@ impl Ocr {
             .try_into()
             .map_err(|_| "detection: unexpected output".to_string())?;
         let [_, _, mh, mw] = out.shape();
-        let prob = out.to_vec();
+        let prob = contiguous(&out);
         let (sx, sy) = (img.w as f32 / mw as f32, img.h as f32 / mh as f32);
         Ok(components(&prob, mw, mh)
             .into_iter()
@@ -192,7 +185,7 @@ impl Ocr {
                 self.classes.len()
             ));
         }
-        let probs = out.to_vec();
+        let probs = contiguous(&out);
 
         // Greedy CTC: best class per frame, repeats merged, blanks dropped.
         // Each character keeps the frames it spans, for word positions.
@@ -268,13 +261,13 @@ impl Ocr {
         let words: Vec<Word> = spans
             .into_iter()
             .map(|(text, [a0, a1, ..])| {
-                let r = q.bounds(a0, a1, b0, b1);
+                let (x0, y0, x1, y1) = q.bounds(a0, a1, b0, b1);
                 Word {
                     text,
-                    x: r.x0,
-                    y: r.y0,
-                    w: r.x1 - r.x0,
-                    h: r.y1 - r.y0,
+                    x: x0,
+                    y: y0,
+                    w: x1 - x0,
+                    h: y1 - y0,
                 }
             })
             .collect();
@@ -367,17 +360,25 @@ impl Image {
         Ok(Image { rgb, w, h })
     }
 
-    /// Channel `c` (0 red, 1 green, 2 blue) at a point between pixel
-    /// centres, interpolated; points outside take the nearest edge.
-    fn bilinear(&self, x: f32, y: f32, c: usize) -> f32 {
+    /// Red, green and blue at a point between pixel centres, interpolated;
+    /// points outside take the nearest edge.
+    fn bilinear(&self, x: f32, y: f32) -> [f32; 3] {
         let (maxx, maxy) = ((self.w - 1) as f32, (self.h - 1) as f32);
         let (fx, fy) = ((x - 0.5).clamp(0.0, maxx), (y - 0.5).clamp(0.0, maxy));
         let (x0, y0, tx, ty) = (fx as usize, fy as usize, fx.fract(), fy.fract());
         let (x1, y1) = ((x0 + 1).min(self.w - 1), (y0 + 1).min(self.h - 1));
-        let px = |x: usize, y: usize| self.rgb[(y * self.w + x) * 3 + c] as f32;
-        let top = px(x0, y0) * (1.0 - tx) + px(x1, y0) * tx;
-        let bottom = px(x0, y1) * (1.0 - tx) + px(x1, y1) * tx;
-        top * (1.0 - ty) + bottom * ty
+        let at = |x: usize, y: usize| (y * self.w + x) * 3;
+        let (a, b, c, d) = (at(x0, y0), at(x1, y0), at(x0, y1), at(x1, y1));
+        let w = [
+            (1.0 - tx) * (1.0 - ty),
+            tx * (1.0 - ty),
+            (1.0 - tx) * ty,
+            tx * ty,
+        ];
+        std::array::from_fn(|k| {
+            let px = |i: usize| self.rgb[i + k] as f32;
+            px(a) * w[0] + px(b) * w[1] + px(c) * w[2] + px(d) * w[3]
+        })
     }
 
     /// `q` resampled upright to `ow`×`oh` as a [1, 3, oh, ow] tensor in BGR
@@ -394,8 +395,9 @@ impl Image {
         for oy in 0..oh {
             for ox in 0..ow {
                 let (x, y) = q.at((ox as f32 + 0.5) * sa, (oy as f32 + 0.5) * sb);
+                let rgb = self.bilinear(x, y);
                 for c in 0..3 {
-                    data[(c * oh + oy) * ow + ox] = f(c, self.bilinear(x, y, 2 - c));
+                    data[(c * oh + oy) * ow + ox] = f(c, rgb[2 - c]);
                 }
             }
         }
@@ -418,8 +420,8 @@ impl Ink {
         let gray: Vec<f32> = (0..w * h)
             .map(|i| {
                 let (x, y) = q.at((i % w) as f32 + 0.5, (i / w) as f32 + 0.5);
-                (img.bilinear(x, y, 0) * 3.0 + img.bilinear(x, y, 1) * 6.0 + img.bilinear(x, y, 2))
-                    / 10.0
+                let [r, g, b] = img.bilinear(x, y);
+                (r * 3.0 + g * 6.0 + b) / 10.0
             })
             .collect();
         let (lo, hi) = gray

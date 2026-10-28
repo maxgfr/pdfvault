@@ -4,7 +4,7 @@
 import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { GLM_DIR, MODEL_PACKS, packBytes, type ModelPackId } from "@pdfvault/engine";
+import { MODEL_PACKS, packBytes, type ModelPackId } from "@pdfvault/engine";
 import lockfile from "../glm-runtime/bun.lock" with { type: "text" };
 import manifest from "../glm-runtime/package.json" with { type: "text" };
 
@@ -21,9 +21,6 @@ export function modelDir(): string {
 // the model, from the pinned glm-runtime/bun.lock, and deleted with it.
 // sharp and onnxruntime-web are stubbed out: pages arrive as raw pixels, and
 // the Node build of Transformers.js carries its own copy of the web runtime.
-
-/** What installing the runtime downloads from npm, onnxruntime-node being most of it. */
-export const RUNTIME_BYTES = 117_000_000;
 const STUBS: Record<string, string> = {
   "stub/sharp/package.json": '{ "name": "sharp", "version": "0.0.0", "type": "module", "main": "index.js" }\n',
   "stub/sharp/index.js": 'export default function sharp() {\n  throw new Error("sharp is not installed: pdfvault hands GLM-OCR raw pixels");\n}\n',
@@ -35,23 +32,24 @@ const DONE = ".installed";
 
 export const runtimeDir = () => join(modelDir(), "glm-runtime");
 
-/** What getting a pack costs: its files, plus the runtime for GLM-OCR. */
+/** The packs that need code besides their files: what it downloads from npm, and how to install it. */
+const RUNTIMES: Partial<Record<ModelPackId, { bytes: number; dir: () => string; install: () => Promise<void> }>> = {
+  // onnxruntime-node is most of it.
+  glm: { bytes: 117_000_000, dir: runtimeDir, install: installRuntime },
+};
+
+export const hasRuntime = (id: ModelPackId) => RUNTIMES[id] !== undefined;
+
+/** What getting a pack costs: its files, plus its runtime. */
 export function downloadBytes(id: ModelPackId): number {
-  return packBytes(id) + (id === "glm" ? RUNTIME_BYTES : 0);
+  return packBytes(id) + (RUNTIMES[id]?.bytes ?? 0);
 }
 
 async function du(path: string): Promise<number> {
   const s = await stat(path).catch(() => null);
   if (!s?.isDirectory()) return s?.size ?? 0;
-  let n = 0;
-  for (const e of await readdir(path)) n += await du(join(path, e));
-  return n;
-}
-
-/** Whether GLM-OCR's runtime is installed, and its size on disk. */
-export async function runtimeInstalled(): Promise<{ complete: boolean; bytes: number }> {
-  const done = await Bun.file(join(runtimeDir(), DONE)).exists();
-  return { complete: done, bytes: await du(runtimeDir()) };
+  const sizes = await Promise.all((await readdir(path)).map((e) => du(join(path, e))));
+  return sizes.reduce((n, b) => n + b, 0);
 }
 
 /**
@@ -90,39 +88,41 @@ async function installRuntime(): Promise<void> {
   await Bun.write(join(dir, DONE), "");
 }
 
-async function fileSha256(path: string): Promise<string> {
-  const hash = new Bun.CryptoHasher("sha256");
-  for await (const chunk of Bun.file(path).stream()) hash.update(chunk);
-  return hash.digest("hex");
+/** Whether every file of the pack is there at its pinned size, and its runtime finished installing. Cheap: run before each job. */
+export async function ready(id: ModelPackId): Promise<boolean> {
+  const sizes = await Promise.all(MODEL_PACKS[id].files.map((f) => stat(join(modelDir(), f.name)).then((s) => s.size === f.bytes, () => false)));
+  const runtime = RUNTIMES[id];
+  return sizes.every(Boolean) && (!runtime || (await Bun.file(join(runtime.dir(), DONE)).exists()));
 }
 
-/** Bytes of the pack's files on disk (and its runtime), and whether all of them are there. */
+/** Whether the pack is complete, and the bytes it and its runtime take on disk (for `models list` and `rm`). */
 export async function installed(id: ModelPackId): Promise<{ complete: boolean; bytes: number }> {
-  let bytes = 0;
-  let complete = true;
-  for (const f of MODEL_PACKS[id].files) {
-    const s = await stat(join(modelDir(), f.name)).catch(() => null);
-    if (s?.size === f.bytes) bytes += s.size;
-    else complete = false;
-  }
-  if (id === "glm") {
-    const runtime = await runtimeInstalled();
-    bytes += runtime.bytes;
-    complete &&= runtime.complete;
-  }
-  return { complete, bytes };
+  const files = await Promise.all(MODEL_PACKS[id].files.map((f) => stat(join(modelDir(), f.name)).then((s) => (s.size === f.bytes ? s.size : 0), () => 0)));
+  const runtime = RUNTIMES[id];
+  const bytes = files.reduce((n, b) => n + b, 0) + (runtime ? await du(runtime.dir()) : 0);
+  return { complete: await ready(id), bytes };
 }
 
-/** Download the files the pack is missing, each checked against its SHA-256 (then GLM-OCR's runtime). */
+/**
+ * Download the files the pack is missing, each checked against its SHA-256,
+ * then its runtime. A file already there at its pinned size was checked when
+ * it was downloaded (only checked files are renamed into place).
+ */
 export async function pull(id: ModelPackId, progress?: (done: number, total: number) => void, onRuntime?: () => void): Promise<void> {
   const dir = modelDir();
   const files = MODEL_PACKS[id].files;
-  const total = files.reduce((n, f) => n + f.bytes, 0);
+  const total = packBytes(id);
   let done = 0;
+  let shown = -1;
+  // Once per percent, not once per network chunk.
+  const report = () => {
+    const percent = Math.floor((done / total) * 100);
+    if (percent !== shown) progress?.((shown = percent) * total / 100, total);
+  };
   for (const f of files) {
     const path = join(dir, f.name);
     await mkdir(dirname(path), { recursive: true });
-    if ((await stat(path).catch(() => null))?.size === f.bytes && (await fileSha256(path)) === f.sha256) {
+    if ((await stat(path).catch(() => null))?.size === f.bytes) {
       done += f.bytes;
       continue;
     }
@@ -135,7 +135,7 @@ export async function pull(id: ModelPackId, progress?: (done: number, total: num
       hash.update(chunk);
       part.write(chunk);
       done += chunk.length;
-      progress?.(done, total);
+      report();
     }
     await part.end();
     const actual = hash.digest("hex");
@@ -145,22 +145,21 @@ export async function pull(id: ModelPackId, progress?: (done: number, total: num
     }
     await rename(`${path}.part`, path);
   }
-  if (id === "glm" && !(await runtimeInstalled()).complete) {
+  const runtime = RUNTIMES[id];
+  if (runtime && !(await ready(id))) {
     onRuntime?.();
-    await installRuntime();
+    await runtime.install();
   }
 }
 
-/** Delete the pack's files (and GLM-OCR's runtime); returns the bytes freed. */
+/** Delete the pack's files, the folders they sit in, and its runtime; returns the bytes freed. */
 export async function remove(id: ModelPackId): Promise<number> {
   const { bytes } = await installed(id);
-  for (const f of MODEL_PACKS[id].files) {
-    await rm(join(modelDir(), f.name), { force: true });
-    await rm(join(modelDir(), `${f.name}.part`), { force: true });
-  }
-  if (id === "glm") {
-    await rm(join(modelDir(), GLM_DIR), { recursive: true, force: true });
-    await rm(runtimeDir(), { recursive: true, force: true });
-  }
+  // A pack in a folder of its own (GLM-OCR keeps its repository's layout) goes as one folder.
+  const tops = new Set(MODEL_PACKS[id].files.map((f) => f.name.split("/")[0]!));
+  for (const top of tops) await rm(join(modelDir(), top), { recursive: true, force: true });
+  for (const f of MODEL_PACKS[id].files) await rm(join(modelDir(), `${f.name}.part`), { force: true });
+  const runtime = RUNTIMES[id];
+  if (runtime) await rm(runtime.dir(), { recursive: true, force: true });
   return bytes;
 }

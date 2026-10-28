@@ -22,7 +22,7 @@ import {
   type Tool,
 } from "@pdfvault/engine";
 import { loader } from "./loader.ts";
-import { downloadBytes, installed, modelDir, pull, remove } from "./models.ts";
+import { downloadBytes, hasRuntime, installed, modelDir, pull, remove } from "./models.ts";
 import { INSTALL_HINT, SKILL } from "./skill.ts";
 import pkg from "../package.json" with { type: "json" };
 
@@ -359,23 +359,23 @@ async function models(args: string[]): Promise<number> {
         const state = r.complete ? "installed" : r.bytes > 0 ? "partly downloaded" : "not downloaded";
         // Installed: the space it takes; otherwise what downloading it costs.
         const size = megabytes(r.complete ? r.bytes : r.size);
-        const runtime = r.id === "glm" ? " + its runtime" : "";
+        const runtime = hasRuntime(r.id) ? " + its runtime" : "";
         process.stdout.write(`${r.id.padEnd(8)}${state.padEnd(19)}${size.padStart(7)}  ${r.title}${runtime}\n`);
       }
       process.stdout.write(`\nFolder: ${modelDir()}\n`);
     }
     return EXIT_OK;
   }
+  const unknown = ids.find((id) => !isModelPackId(id));
+  if (unknown) return usage(`unknown model "${unknown}" (${modelPackIds.join(", ")})`);
   if (sub === "pull") {
     if (ids.length === 0) return usage(`pull needs a model: ${modelPackIds.join(", ")}`);
-    for (const id of ids) if (!isModelPackId(id)) return usage(`unknown model "${id}" (${modelPackIds.join(", ")})`);
     for (const id of ids as ModelPackId[]) await download(id, rest.includes("--quiet") || rest.includes("-q"));
     return EXIT_OK;
   }
   if (sub === "rm") {
     const all = rest.includes("--all");
     if (!all && ids.length === 0) return usage(`rm needs a model (${modelPackIds.join(", ")}) or --all`);
-    for (const id of ids) if (!isModelPackId(id)) return usage(`unknown model "${id}" (${modelPackIds.join(", ")})`);
     for (const id of all ? modelPackIds : (ids as ModelPackId[])) {
       const freed = await remove(id);
       process.stderr.write(freed > 0 ? `${id}: deleted, ${megabytes(freed)} freed\n` : `${id}: not downloaded\n`);
@@ -469,7 +469,7 @@ export async function main(argv: string[]): Promise<number> {
         return await tool.run(engine, bytes, options, progress);
       } catch (e) {
         const id = e instanceof EngineError && e.code === "model_missing" ? e.pack : undefined;
-        if (!id || !isModelPackId(id) || asked.has(id) || !(p.download || interactive)) throw e;
+        if (!id || asked.has(id) || !(p.download || interactive)) throw e;
         if (progress) process.stderr.write("\r\x1b[K");
         asked.add(id);
         if (!p.download && !(await confirm(`${tool.title} needs ${MODEL_PACKS[id].title}, a one-time ${megabytes(downloadBytes(id))} download. Download it?`))) throw e;

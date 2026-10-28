@@ -213,17 +213,13 @@ async function pagesText(engine: Engine, pdf: Uint8Array, o: Options, progress?:
   const glm = str(o.engine) === "glm";
   const sizes = glm && empty.length ? (await engine.core<{ pageSizes: { width: number; height: number }[] }>("info", [pdf], pw(o))).report.pageSizes : [];
   for (const [i, p] of empty.entries()) {
-    if (glm) {
-      progress?.(i, empty.length, `Reading page ${p.page + 1} with GLM-OCR (about a minute per page)`);
-      const size = sizes[p.page];
-      const fit = size ? Math.floor(72 * Math.sqrt(GLM_PIXELS / (size.width * size.height))) : dpi;
-      const img = await renderPage(engine, pdf, p.page, Math.min(dpi, fit), str(o.password));
-      p.markdown = await engine.glm(img.pixels, img.width, img.height);
-    } else {
-      progress?.(i, empty.length, `Recognizing text on page ${p.page + 1}`);
-      const img = await renderPage(engine, pdf, p.page, dpi, str(o.password));
-      p.spans = linesToSpans(await engine.ocr(img.pixels, img.width, img.height), dpi);
-    }
+    progress?.(i, empty.length, glm ? `Reading page ${p.page + 1} with GLM-OCR (about a minute per page)` : `Recognizing text on page ${p.page + 1}`);
+    // GLM-OCR reads a page at a capped pixel count, whatever its size.
+    const size = sizes[p.page];
+    const at = size ? Math.min(dpi, Math.floor(72 * Math.sqrt(GLM_PIXELS / (size.width * size.height)))) : dpi;
+    const img = await renderPage(engine, pdf, p.page, at, str(o.password));
+    if (glm) p.markdown = await engine.glm(img.pixels, img.width, img.height);
+    else p.spans = linesToSpans(await engine.ocr(img.pixels, img.width, img.height), at);
     ocrPages.push(p.page + 1);
   }
   return { pages: text.report.pages, ocrPages };

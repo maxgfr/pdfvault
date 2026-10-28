@@ -177,10 +177,9 @@ fn strip_markdown(md: &str) -> String {
         .join("\n")
 }
 
-pub fn to_markdown(pages: &[PageText], o: &MarkdownOptions) -> String {
+pub fn to_markdown(src: &[PageText], o: &MarkdownOptions) -> String {
     let escape = |s: &str| if o.plain { s.to_string() } else { escape(s) };
-    let written: Vec<Option<&str>> = pages.iter().map(|p| p.markdown.as_deref()).collect();
-    let mut pages: Vec<Vec<Line>> = pages
+    let mut pages: Vec<Vec<Line>> = src
         .iter()
         .map(|p| {
             if p.markdown.is_some() {
@@ -265,7 +264,7 @@ pub fn to_markdown(pages: &[PageText], o: &MarkdownOptions) -> String {
                 "---".into()
             });
         }
-        if let Some(md) = written[pi] {
+        if let Some(md) = src[pi].markdown.as_deref() {
             let md = if o.plain {
                 strip_markdown(md)
             } else {

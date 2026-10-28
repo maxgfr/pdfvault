@@ -1,4 +1,4 @@
-import { EngineError, isModelPackId, type ModelPackId } from "@pdfvault/engine";
+import { EngineError, type ModelPackId } from "@pdfvault/engine";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ShareButton, download } from "../action-panel.tsx";
 import { Icon } from "../icons.tsx";
@@ -93,7 +93,7 @@ export function ScanPage() {
       const [file] = workspace.add([{ name, bytes, unsaved: true }]);
       setMade({ key: file!.key, name, bytes });
     } catch (e) {
-      if (e instanceof EngineError && e.code === "model_missing" && e.pack && isModelPackId(e.pack)) setNeedsModel(e.pack);
+      if (e instanceof EngineError && e.code === "model_missing" && e.pack) setNeedsModel(e.pack);
       else if (!ctrl.signal.aborted) setError(e instanceof Error ? e.message : String(e));
     } finally {
       setProgress(null);

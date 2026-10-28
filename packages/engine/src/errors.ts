@@ -1,3 +1,5 @@
+import type { ModelPackId } from "./models.ts";
+
 /** Stable error codes shared by the Rust engine, the CLI's --json and the site. */
 export type ErrorCode =
   | "invalid_pdf"
@@ -18,8 +20,8 @@ export type ErrorCode =
 export class EngineError extends Error {
   readonly code: ErrorCode;
   /** With `model_missing`: the model pack to download. */
-  readonly pack?: string;
-  constructor(code: ErrorCode, message: string, pack?: string) {
+  readonly pack?: ModelPackId;
+  constructor(code: ErrorCode, message: string, pack?: ModelPackId) {
     super(message);
     this.name = "EngineError";
     this.code = code;
