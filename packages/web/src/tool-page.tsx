@@ -1,6 +1,7 @@
 import type { Tool } from "@pdfvault/engine";
 import { useId, useRef, useState, useSyncExternalStore } from "react";
 import { ActionPanel, type InFile } from "./action-panel.tsx";
+import { CropPreview } from "./crop-box.tsx";
 import { Icon } from "./icons.tsx";
 import { bytes } from "./reports.tsx";
 import { vault, type VaultFile } from "./vault.ts";
@@ -229,6 +230,11 @@ export function ToolPage({ tool }: { tool: Tool }) {
         groups={[{ tool, slots: inputs }]}
         ready={ready}
         hint={tool.input === "pdfs" ? "Add at least two PDFs." : "Add a file to start."}
+        preview={
+          (tool.id === "crop" || tool.id === "img-edit") && inputs[0]![0]
+            ? (o, change) => <CropPreview toolId={tool.id} file={inputs[0]![0]!} options={o} onChange={change} />
+            : undefined
+        }
         fileActions={(f) => (
           <button
             type="button"

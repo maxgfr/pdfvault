@@ -35,10 +35,10 @@ The editor opens a PDF page by page. **Edit text**: click a paragraph of the doc
 | --- | --- |
 | Compress | **Compress PDF** with four levels (below), never larger than the original |
 | Organize | Merge (one bookmark per file), combine PDFs and images into one PDF, split (ranges, every N pages, by bookmark), extract, delete, reorder, rotate, insert blank pages, N-up (2–16 pages per sheet) |
-| Edit | **Editor**: change existing text, add text in any script, whiteout, shapes, drawing, signature and images, highlights and notes as annotations, form filling, true redaction that keeps the rest of the page selectable, page strip. **Viewer**. Crop, text watermark, page numbers, header and footer, visual signature (image stamp), metadata (read, edit, wipe), flatten forms, repair, compare (pixel diff per page), info |
+| Edit | **Editor**: change existing text, add text in any script, whiteout, shapes, drawing, signature and images, highlights and notes as annotations, form filling, true redaction that keeps the rest of the page selectable, page strip. **Viewer**. Crop (drag a box over the page, or type the margins), text watermark, page numbers, header and footer, visual signature (image stamp), metadata (read, edit, wipe), flatten forms, repair, compare (pixel diff per page), info |
 | Security | Password protection with **AES-256** (PDF 2.0, revision 6), permissions, unlock |
 | Convert | **Scan**: photos of paper → a straightened, cleaned-up PDF, Images → PDF (JPEGs embedded untouched, EXIF orientation honored), PDF → PNG/JPEG/WebP, **OCR → searchable PDF**, PDF → Markdown, text or EPUB (OCR on scanned pages, optionally with GLM-OCR, which reads harder pages and writes formulas as LaTeX) |
-| Images | Compress, resize, convert JPEG/PNG/WebP, strip EXIF/GPS/XMP without re-encoding, crop/rotate/flip, in batches |
+| Images | Compress, resize, convert JPEG/PNG/WebP, strip EXIF/GPS/XMP without re-encoding, crop (drag a box over the image, or type the rectangle)/rotate/flip, in batches |
 
 ### Compression levels
 

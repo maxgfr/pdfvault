@@ -2215,6 +2215,28 @@ a.button {
   justify-content: center;
   gap: 8px;
 }
+/* The same box on the Crop tools, over the first page or image. */
+.crop-tool {
+  margin: 0 0 18px;
+}
+.crop-tool .crop-stage img {
+  max-height: min(52dvh, 560px);
+  box-shadow: 0 0 0 1px var(--line);
+}
+.crop-move {
+  fill: transparent;
+  cursor: move;
+  outline: none;
+}
+.crop-move:focus-visible,
+.crop-move[data-active="true"] {
+  fill: var(--accent);
+  fill-opacity: 0.12;
+}
+.crop-tool figcaption {
+  margin: 0;
+  text-align: center;
+}
 .crop-wait {
   padding: 40px 0;
   text-align: center;
