@@ -85,3 +85,22 @@ test("photos shared from another app open in the scanner", async ({ page }) => {
   // The inbox is emptied as soon as the page takes the photos.
   expect(await page.evaluate(() => caches.has("pdfvault-inbox"))).toBe(false);
 });
+
+test("a PDF shared with a photo takes them both to your files", async ({ page }) => {
+  await page.goto("./");
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null, null, { timeout: 30_000 });
+  const files = [
+    { name: "shared.pdf", type: "application/pdf", bytes: [...(await readFile(fixture("text-3.pdf")))] },
+    { name: "shared.jpg", type: "image/jpeg", bytes: [...(await readFile(fixture("photo.jpg")))] },
+  ];
+  await page.evaluate(async (files) => {
+    const form = new FormData();
+    for (const f of files) form.append("files", new File([new Uint8Array(f.bytes)], f.name, { type: f.type }));
+    await fetch("./share-target", { method: "POST", body: form });
+  }, files);
+  await page.goto("./#/scan?shared");
+  await expect(page.getByRole("heading", { level: 1, name: "Your files" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator(".ws-file")).toHaveCount(2);
+  await expect(page.locator(".ws-file").filter({ hasText: "shared.pdf" })).toContainText("3 pages", { timeout: 60_000 });
+  expect(await page.evaluate(() => caches.has("pdfvault-inbox"))).toBe(false);
+});

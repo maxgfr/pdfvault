@@ -234,32 +234,23 @@ export async function photoBytes(file: Blob, name: string): Promise<Uint8Array> 
 export const INBOX = "pdfvault-inbox";
 
 /**
- * Take the files another app shared to pdfvault: photos join the scan, PDFs
- * and anything else go to your files. The inbox is emptied right away.
- * Returns how many photos joined the scan.
+ * Take the files another app shared to pdfvault: photos alone join the scan;
+ * a PDF or anything else among them sends them all to your files. The inbox
+ * is emptied right away. Returns how many photos joined the scan.
  */
 export async function takeShared(): Promise<number> {
   if (!("caches" in self)) return 0;
   const cache = await caches.open(INBOX);
-  const photos: Uint8Array[] = [];
-  const others: { name: string; bytes: Uint8Array }[] = [];
+  const shared: { name: string; blob: Blob; bytes: Uint8Array }[] = [];
   for (const req of await cache.keys()) {
     const res = await cache.match(req);
     if (!res) continue;
-    const name = decodeURIComponent(res.headers.get("x-name") ?? "shared");
     const blob = await res.blob();
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    if (isPdf(bytes)) others.push({ name, bytes });
-    else {
-      try {
-        photos.push(await photoBytes(blob, name));
-      } catch {
-        others.push({ name, bytes });
-      }
-    }
+    shared.push({ name: decodeURIComponent(res.headers.get("x-name") ?? "shared"), blob, bytes: new Uint8Array(await blob.arrayBuffer()) });
   }
   await caches.delete(INBOX);
-  if (others.length) workspace.add(others);
+  const photos = shared.some((f) => isPdf(f.bytes)) ? [] : await Promise.all(shared.map((f) => photoBytes(f.blob, f.name))).catch(() => []);
   if (photos.length) session.add(photos);
+  else if (shared.length) workspace.add(shared);
   return photos.length;
 }

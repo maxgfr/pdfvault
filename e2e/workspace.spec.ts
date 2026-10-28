@@ -138,11 +138,31 @@ test("a locked PDF unlocks in its card", async ({ page }) => {
   await page.goto("./");
   await drop(page, ["locked.pdf"]);
   const c = card(page, "locked.pdf");
-  await expect(c.getByText("Locked")).toBeVisible({ timeout: 60_000 });
+  await expect(c.getByText("Locked", { exact: true })).toBeVisible({ timeout: 60_000 });
   await c.getByLabel("Password").fill("secret");
   await c.getByRole("button", { name: "Unlock" }).click();
   await expect(c).toContainText(/\d+ pages?/, { timeout: 60_000 });
   await page.getByRole("button", { name: "Compress", exact: true }).click();
   await page.locator(".ws-panel").getByRole("button", { name: "Compress", exact: true }).click();
   await expect(page.locator(".ws-panel").getByRole("button", { name: "Download", exact: true })).toBeVisible({ timeout: 90_000 });
+});
+
+test("files opened with the installed app join your files", async ({ page }) => {
+  const w = await watch(page);
+  // Playwright cannot open a file with an installed app: stand in for the
+  // browser's launchQueue, handing the page file handles as it would.
+  const files = [
+    { name: "opened.pdf", bytes: [...(await readFile(fixture("text-3.pdf")))] },
+    { name: "opened.jpg", bytes: [...(await readFile(fixture("photo.jpg")))] },
+  ];
+  await page.addInitScript((files) => {
+    const handles = files.map((f) => ({ kind: "file", name: f.name, getFile: async () => new File([new Uint8Array(f.bytes)], f.name) }));
+    // Chromium has its own launchQueue, a read-only getter: shadow it.
+    Object.defineProperty(window, "launchQueue", { value: { setConsumer: (fn: (p: { files: unknown[] }) => void) => fn({ files: handles }) } });
+  }, files);
+  await page.goto("./");
+  await expect(page.getByRole("heading", { level: 1, name: "Your files" })).toBeVisible();
+  await expect(page.locator(".ws-file")).toHaveCount(2);
+  await expect(card(page, "opened.pdf")).toContainText("3 pages", { timeout: 60_000 });
+  await w.assertClean();
 });
