@@ -2,7 +2,9 @@
 // PDF, and photos shared to the installed app.
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fixture, watch } from "./helpers.ts";
 
 test.use({
@@ -19,7 +21,11 @@ async function makePdf(page: Page, pages: number) {
   const result = page.getByRole("region", { name: "Result" });
   await expect(result).toBeVisible({ timeout: 60_000 });
   const [dl] = await Promise.all([page.waitForEvent("download"), result.getByRole("button", { name: "Download" }).click()]);
-  const path = (await dl.path())!;
+  // Saved under a .pdf name, not read from dl.path(): Ubuntu 26.04's AppArmor
+  // profile for qpdf only lets it open files ending in .pdf, .json or .qdf,
+  // and Playwright's download artifacts have no extension at all.
+  const path = join(await mkdtemp(join(tmpdir(), "pdfvault-scan-")), "scan.pdf");
+  await dl.saveAs(path);
   expect((await readFile(path)).subarray(0, 5).toString()).toBe("%PDF-");
   return path;
 }
