@@ -5,7 +5,7 @@ import { Icon } from "./icons.tsx";
 import { ModelPrompt } from "./model-prompt.tsx";
 import { Report, bytes } from "./reports.tsx";
 import { runJob, warmUp, zipFiles } from "./runner.ts";
-import { vault } from "./vault.ts";
+import { storeFailure, vault } from "./vault.ts";
 
 export interface InFile {
   key: string;
@@ -120,6 +120,7 @@ export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, res
   const [needsPassword, setNeedsPassword] = useState(false);
   const [needsModel, setNeedsModel] = useState<ModelPackId | null>(null);
   const [saved, setSaved] = useState<Set<string>>(() => new Set());
+  const [notSaved, setNotSaved] = useState<Record<string, string>>({});
   const abort = useRef<AbortController | null>(null);
   const unlocked = useSyncExternalStore((fn) => vault.subscribe(fn), () => vault.unlocked);
   const formId = useId();
@@ -330,11 +331,26 @@ export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, res
                           className="secondary small"
                           disabled={saved.has(f.name)}
                           onClick={() =>
-                            void vault.add(f.name, f.name.split(".").pop() ?? "", f.bytes).then(() => setSaved((s) => new Set(s).add(f.name)))
+                            void vault.add(f.name, f.name.split(".").pop() ?? "", f.bytes).then(
+                              () => {
+                                setSaved((s) => new Set(s).add(f.name));
+                                setNotSaved((m) => {
+                                  const next = { ...m };
+                                  delete next[f.name];
+                                  return next;
+                                });
+                              },
+                              (e: unknown) => setNotSaved((m) => ({ ...m, [f.name]: storeFailure(e) })),
+                            )
                           }
                         >
                           <Icon name="lock" /> {saved.has(f.name) ? "Saved" : "Save to vault"}
                         </button>
+                      ) : null}
+                      {notSaved[f.name] ? (
+                        <span className="error-text" role="alert">
+                          {notSaved[f.name]}
+                        </span>
                       ) : null}
                       {fileActions?.(f, o)}
                     </li>
