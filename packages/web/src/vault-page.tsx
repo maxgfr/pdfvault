@@ -2,7 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { Icon } from "./icons.tsx";
 import { bytes } from "./reports.tsx";
 import { download } from "./tool-page.tsx";
-import { vault, type VaultFile } from "./vault.ts";
+import { storeFailure, vault, type VaultFile } from "./vault.ts";
 
 export function VaultPage() {
   const unlocked = useSyncExternalStore((fn) => vault.subscribe(fn), () => vault.unlocked);
@@ -41,7 +41,12 @@ export function VaultPage() {
   };
 
   const add = async (list: FileList | null) => {
-    for (const f of list ?? []) await vault.add(f.name, f.type, new Uint8Array(await f.arrayBuffer()));
+    setError(null);
+    try {
+      for (const f of list ?? []) await vault.add(f.name, f.type, new Uint8Array(await f.arrayBuffer()));
+    } catch (e) {
+      setError(storeFailure(e));
+    }
   };
 
   return (
@@ -96,6 +101,7 @@ export function VaultPage() {
               <Icon name="lock" /> Lock now
             </button>
           </div>
+          {error ? <p className="error-text" role="alert">{error}</p> : null}
           {files.length ? (
             <ul className="files out">
               {files.map((f) => (

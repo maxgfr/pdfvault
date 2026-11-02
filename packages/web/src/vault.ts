@@ -70,6 +70,13 @@ async function tx<T>(store: string, mode: IDBTransactionMode, fn: (s: IDBObjectS
   }
 }
 
+/** What to tell the user when a file could not be kept in the vault. */
+export function storeFailure(e: unknown): string {
+  const name = e instanceof DOMException || e instanceof Error ? e.name : "";
+  if (name === "QuotaExceededError") return "storage for this site is full: the file was not saved to the vault";
+  return `the file was not saved to the vault: ${e instanceof Error ? e.message : String(e)}`;
+}
+
 type Listener = () => void;
 
 class Vault {
@@ -144,6 +151,11 @@ class Vault {
     return this.#key;
   }
 
+  /**
+   * Encrypt and keep a file. Rejects when IndexedDB refuses it: the origin
+   * (maxgfr.github.io) is shared with every other app on it, so its quota can
+   * be full of someone else's data. Callers say so with `storeFailure`.
+   */
   async add(name: string, type: string, bytes: Uint8Array): Promise<VaultFile> {
     const key = this.#need();
     const id = crypto.randomUUID();
