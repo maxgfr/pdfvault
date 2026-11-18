@@ -53,9 +53,10 @@ export function About() {
       </p>
       <h2>Offline</h2>
       <p>
-        A service worker keeps the app on your device after the first visit, so it works in airplane mode. The page renderer
-        and the fonts are cached the first time you use a tool that needs them. Installed, pdfvault can open PDFs and photos
-        from your system's Open with menu or share sheet: the service worker hands them to the page without any server.
+        A service worker keeps the app on your device after the first visit, so it works in airplane mode. The page renderer,
+        the Office converter and the fonts are cached the first time you use a tool that needs them. Installed, pdfvault can
+        open PDFs, photos and Office files from your system's Open with menu or share sheet: the service worker hands them to
+        the page without any server.
       </p>
       <h2>Stored on this device</h2>
       <p>
@@ -79,6 +80,12 @@ export function About() {
         <li>The “extreme” compression level turns every page into an image: text is no longer selectable.</li>
         <li>Fonts are not subset, so text-heavy PDFs shrink less than image-heavy ones.</li>
         <li>Visual signatures are images, not cryptographic signatures.</li>
+        <li>
+          Office to PDF lays Word, Excel and PowerPoint files out again with Typst (through office2pdf), so line and page breaks
+          can differ from Office. Calibri and Cambria are drawn with Carlito and Caladea, which have the same metrics (SIL Open
+          Font License 1.1: <a href="fonts/Carlito-OFL.txt">Carlito</a>, <a href="fonts/Caladea-OFL.txt">Caladea</a>). Legacy
+          .doc, .xls and .ppt files and OpenDocument files are not read.
+        </li>
         <li>
           The editor writes text with the Liberation fonts (SIL Open Font License 1.1, <a href="fonts/LICENSE.txt">licence</a>) when a
           document's own font lacks the letters. It changes text line by line, without reflowing paragraphs.

@@ -21,6 +21,7 @@ const tool = (id: string) => toolById.get(id)!;
 export function fit(t: Tool, sel: WorkFile[]): Group[] | null {
   const pdfs = sel.filter((f) => f.kind === "pdf");
   const images = sel.filter((f) => f.kind === "image");
+  const office = sel.filter((f) => f.kind === "office");
   const onlyPdfs = sel.length > 0 && pdfs.length === sel.length;
   const onlyImages = sel.length > 0 && images.length === sel.length;
   switch (t.input) {
@@ -32,7 +33,8 @@ export function fit(t: Tool, sel: WorkFile[]): Group[] | null {
     case "images":
       return onlyImages ? [{ tool: t, slots: [images.map(asIn)] }] : null;
     case "mixed":
-      return pdfs.length + images.length === sel.length && sel.length >= 2 ? [{ tool: t, slots: [sel.map(asIn)] }] : null;
+      // Office files are converted to PDF inside the job, in their place.
+      return pdfs.length + images.length + office.length === sel.length && sel.length >= 2 ? [{ tool: t, slots: [sel.map(asIn)] }] : null;
     case "pdf+image":
       return sel.length === 2 && pdfs.length === 1 && images.length === 1 ? [{ tool: t, slots: [[asIn(pdfs[0]!)], [asIn(images[0]!)]] }] : null;
     case "pdf+pdf":
@@ -40,8 +42,10 @@ export function fit(t: Tool, sel: WorkFile[]): Group[] | null {
     case "pdf+images":
       return pdfs.length === 1 && pdfs.length + images.length === sel.length ? [{ tool: t, slots: [[asIn(pdfs[0]!)], images.map(asIn)] }] : null;
     case "markdown":
-      // The workspace holds PDFs and images only; Markdown goes through the tool page.
+      // The workspace holds no Markdown; it goes through the tool page.
       return null;
+    case "office":
+      return office.length === sel.length && sel.length > 0 ? [{ tool: t, slots: [office.map(asIn)] }] : null;
   }
 }
 
@@ -51,6 +55,9 @@ export function quickActions(sel: WorkFile[]): WorkAction[] {
   const images = sel.filter((f) => f.kind === "image");
   const usable = pdfs.length + images.length === sel.length && sel.length > 0;
   const out: WorkAction[] = [];
+  // Office files: converting is what they are here for.
+  const office = fit(tool("office2pdf"), sel);
+  if (office) out.push({ id: "office2pdf", label: "Convert to PDF", icon: "convert", plan: { groups: office } });
   if (usable) {
     const groups: Group[] = [];
     if (pdfs.length) groups.push({ tool: tool("compress"), slots: [pdfs.map(asIn)], label: `${pdfs.length} PDF${pdfs.length > 1 ? "s" : ""}` });
@@ -62,7 +69,8 @@ export function quickActions(sel: WorkFile[]): WorkAction[] {
     out.push({ id: "edit", label: "Edit", icon: "edit", plan: { route: "#/edit", file: pdfs[0]!.key } });
   }
   if (images.length === 1 && sel.length === 1) out.push({ id: "img-edit", label: "Crop & rotate", icon: "edit", plan: { groups: fit(tool("img-edit"), sel)! } });
-  if (usable && sel.length >= 2) out.push({ id: "combine", label: "Combine into one PDF", icon: "organize", plan: { groups: fit(tool("combine"), sel)! } });
+  const combine = fit(tool("combine"), sel);
+  if (combine) out.push({ id: "combine", label: "Combine into one PDF", icon: "organize", plan: { groups: combine } });
   if (images.length === 1 && sel.length === 1) out.push({ id: "to-pdf", label: "Make a PDF", icon: "convert", plan: { groups: fit(tool("img2pdf"), sel)! } });
   if (pdfs.length && pdfs.length === sel.length) out.push({ id: "encrypt", label: "Protect", icon: "lock", plan: { groups: fit(tool("encrypt"), sel)! } });
   return out;

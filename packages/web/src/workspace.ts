@@ -6,7 +6,7 @@ import { EngineError } from "@pdfvault/engine";
 import { useSyncExternalStore } from "react";
 import { coreReport, runJob } from "./runner.ts";
 
-export type Kind = "pdf" | "image" | "unsupported";
+export type Kind = "pdf" | "image" | "office" | "unsupported";
 
 export interface WorkFile {
   key: string;
@@ -30,6 +30,9 @@ export interface WorkFile {
 const has = (b: Uint8Array, at: number, ascii: string) => [...ascii].every((c, i) => b[at + i] === c.charCodeAt(0));
 
 export const isPdf = (b: Uint8Array) => new TextDecoder().decode(b.subarray(0, 1024)).includes("%PDF-");
+
+/** A zip: what a .docx, .xlsx or .pptx is (the office module checks the parts). */
+export const isZip = (b: Uint8Array) => has(b, 0, "PK\x03\x04");
 
 /** The image formats the engine decodes (images::Format::detect). */
 export function isImage(b: Uint8Array): boolean {
@@ -77,19 +80,23 @@ export function classify(name: string, b: Uint8Array): { kind: Kind; problem?: s
     };
   }
   if (photo === "avif") return { kind: "unsupported", problem: "This browser cannot read AVIF images. Save it as JPEG or PNG first." };
-  if (has(b, 0, "PK\x03\x04")) {
-    if (/^(docx?|xlsx?|pptx?|odt|ods|odp|pages|key|numbers)$/.test(ext)) {
-      return { kind: "unsupported", problem: "Office documents cannot be converted in the browser. Export it to PDF from its app, then drop the PDF." };
+  if (isZip(b)) {
+    if (/^(docx|xlsx|pptx)$/.test(ext)) return { kind: "office" };
+    if (/^(odt|ods|odp|pages|key|numbers)$/.test(ext)) {
+      return { kind: "unsupported", problem: "This format cannot be converted yet. Export it from its app as PDF, or as .docx, .xlsx or .pptx, then drop that." };
     }
     return { kind: "unsupported", problem: "This is an archive. Unzip it and drop the files inside." };
   }
   if (/^(doc|xls|ppt|rtf)$/.test(ext)) {
-    return { kind: "unsupported", problem: "Office documents cannot be converted in the browser. Export it to PDF from its app, then drop the PDF." };
+    return { kind: "unsupported", problem: "Legacy .doc, .xls, .ppt and .rtf files cannot be converted. Save it as .docx, .xlsx or .pptx from its app, then drop that." };
+  }
+  if (/^(docx|xlsx|pptx)$/.test(ext) && has(b, 0, "\xd0\xcf\x11\xe0")) {
+    return { kind: "unsupported", problem: "This Office file is protected by a password. Remove the password in its app, then drop it again." };
   }
   if (/^(tiff?|svg|psd|raw|cr2|nef|dng)$/.test(ext)) {
     return { kind: "unsupported", problem: "This image format cannot be read. Convert it to JPEG or PNG first." };
   }
-  return { kind: "unsupported", problem: "pdfvault reads PDFs and JPEG, PNG, WebP, GIF or BMP images." };
+  return { kind: "unsupported", problem: "pdfvault reads PDFs, JPEG, PNG, WebP, GIF or BMP images, and Word, Excel or PowerPoint files." };
 }
 
 type Listener = () => void;

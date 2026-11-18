@@ -5,6 +5,19 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+# All reached only through office2pdf (pdfvault-office, its own lazy wasm
+# module), which pulls in Typst. Each entry names its path.
+ignore = [
+  { id = "RUSTSEC-2026-0194", reason = "quick-xml 0.38.4 via typst-library -> hayagriva -> citationberg, which parses CSL styles for Typst bibliographies: office2pdf never emits one and its Typst world serves no file but its own source and images, so only Typst's bundled CSL data reaches it, never user input" },
+  { id = "RUSTSEC-2026-0195", reason = "quick-xml 0.38.4 NsReader via typst-library -> hayagriva -> citationberg; same path as RUSTSEC-2026-0194, Typst's bundled CSL data only" },
+  { id = "RUSTSEC-2025-0141", reason = "bincode 1 (unmaintained) via typst-library -> two-face / syntect, which decodes the syntax sets bundled in the binary, not document text" },
+  { id = "RUSTSEC-2026-0543", reason = "chrono (unmaintained) via office2pdf -> office2pdf-umya-spreadsheet, for spreadsheet dates" },
+  { id = "RUSTSEC-2024-0436", reason = "paste (unmaintained proc-macro, build time only) via typst-library -> hayagriva / biblatex, and image -> ravif -> rav1e" },
+  { id = "RUSTSEC-2026-0206", reason = "rustybuzz (unmaintained) via typst-library, typst-layout and krilla: Typst's text shaper" },
+  { id = "RUSTSEC-2026-0192", reason = "ttf-parser (unmaintained) via typst-library, fontdb, rustybuzz and krilla: Typst's font reader" },
+  { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml (unmaintained) via typst-library and hayagriva -> serde_yaml, behind Typst's yaml() and YAML bibliographies, which office2pdf never emits" },
+  { id = "RUSTSEC-2024-0320", reason = "yaml-rust (unmaintained) via typst-library -> two-face / syntect, which reads syntax definitions (the bundled ones), not the code it highlights" },
+]
 
 [licenses]
 version = 2
@@ -23,6 +36,10 @@ allow = [
   "BSL-1.0",
   # jpeg-encoder ports libjpeg tables; credited in the README as IJG asks.
   "IJG",
+  # mailparse and quoted_printable (office2pdf reads MHT parts with them).
+  "0BSD",
+  # libfuzzer-sys via image's AVIF encoder (ravif -> rav1e), pulled by office2pdf.
+  "NCSA",
 ]
 unused-allowed-license = "allow"
 

@@ -1,6 +1,6 @@
 # pdfvault
 
-**Private PDF and image tools that never upload your files.** Drop your PDFs and photos, then compress, edit, sign, fill, redact, merge, split, protect, OCR or convert them, entirely on your device. One Rust engine compiled to WebAssembly runs both the website and the command-line tool, so they always produce the same bytes.
+**Private PDF and image tools that never upload your files.** Drop your PDFs, photos and Word, Excel or PowerPoint files, then compress, edit, sign, fill, redact, merge, split, protect, OCR or convert them, entirely on your device. One Rust engine compiled to WebAssembly runs both the website and the command-line tool, so they always produce the same bytes.
 
 **→ [maxgfr.github.io/pdfvault](https://maxgfr.github.io/pdfvault/)** · works offline after the first visit · `bunx pdfvault --help`
 
@@ -18,7 +18,7 @@ Online PDF tools ask you to upload contracts, payslips and scans to someone else
 
 ## How it works
 
-Start from your files, not from a tool. Drop several PDFs, photos or a whole folder on the home page (or paste a screenshot): the page lists them with a preview (click it to read the PDF page by page) and offers what fits the selection. Compress works on a mix (each file gets the right tool), photos and PDFs combine into one PDF in the order shown, and every tool that accepts the selection is one click away. A result can replace its original in the list, so you can compress, then protect, then download, without saving anything in between. An iPhone's HEIC photo becomes a JPEG where the browser can decode it (Safari); formats it cannot read (HEIC elsewhere, Office documents) are named with what to do instead. Once the app is installed, it is also in the system's *Open with* menu for PDFs and JPEG, PNG or WebP images, and in the share sheet: an opened file, or a shared PDF (with any photos shared alongside), lands in this list; photos shared on their own go to the scanner.
+Start from your files, not from a tool. Drop several PDFs, photos or a whole folder on the home page (or paste a screenshot): the page lists them with a preview (click it to read the PDF page by page) and offers what fits the selection. Compress works on a mix (each file gets the right tool), photos, PDFs and Office files combine into one PDF in the order shown, and every tool that accepts the selection is one click away. A Word, Excel or PowerPoint file (.docx, .xlsx, .pptx) converts to PDF in place, and the PDF tools take it from there. A result can replace its original in the list, so you can convert, compress, then protect, then download, without saving anything in between. An iPhone's HEIC photo becomes a JPEG where the browser can decode it (Safari); formats it cannot read (HEIC elsewhere, legacy .doc, .xls and .ppt, OpenDocument) are named with what to do instead. Once the app is installed, it is also in the system's *Open with* menu for PDFs, JPEG, PNG or WebP images and .docx, .xlsx or .pptx files, and in the share sheet: an opened file, or a shared PDF (with any photos shared alongside), lands in this list; photos shared on their own go to the scanner.
 
 **Scan** turns a phone into a document scanner. Open the site (or the installed app: a long press on its icon offers *Scan a document*) and photograph each page. The sheet is found in the photo and straightened. Uneven light and shadows are evened out, so the paper comes out white, in color, grayscale or crisp black and white. Drag the four corners when the detection misses (a loupe shows the paper's edge under your finger), reorder or turn pages, add OCR if the text should be searchable, then share the PDF straight to Mail, Messages or Drive. On Android, photos shared from the gallery to pdfvault land in the scanner. Frames are read from the camera stream in the tab: nothing is recorded or sent.
 
@@ -34,10 +34,10 @@ The editor opens a PDF page by page. **Edit text**: click a paragraph of the doc
 | Category | Tools |
 | --- | --- |
 | Compress | **Compress PDF** with four levels (below), never larger than the original |
-| Organize | Merge (one bookmark per file), combine PDFs and images into one PDF, split (ranges, every N pages, by bookmark), extract, delete, reorder, rotate, insert blank pages, N-up (2–16 pages per sheet) |
+| Organize | Merge (one bookmark per file), combine PDFs, images and Office files into one PDF, split (ranges, every N pages, by bookmark), extract, delete, reorder, rotate, insert blank pages, N-up (2–16 pages per sheet) |
 | Edit | **Editor**: change existing text, add text in any script, whiteout, shapes, drawing, signature and images, highlights and notes as annotations, form filling, true redaction that keeps the rest of the page selectable, page strip. **Viewer**. Crop (drag a box over the page, or type the margins), text watermark, page numbers, header and footer, visual signature (image stamp), metadata (read, edit, wipe), flatten forms, repair, compare (pixel diff per page), info |
 | Security | Password protection with **AES-256** (PDF 2.0, revision 6), permissions, unlock |
-| Convert | **Scan**: photos of paper → a straightened, cleaned-up PDF, Images → PDF (JPEGs embedded untouched, EXIF orientation honored), PDF → PNG/JPEG/WebP, **OCR → searchable PDF**, PDF → Markdown, text or EPUB (OCR on scanned pages), **Markdown → PDF** (headings as bookmarks, lists, tables, code; text selectable), **PDF/A-2b** for archiving (fonts embedded, colour profile, XMP metadata; scripts and attachments removed) |
+| Convert | **Scan**: photos of paper → a straightened, cleaned-up PDF, Images → PDF (JPEGs embedded untouched, EXIF orientation honored), PDF → PNG/JPEG/WebP, **OCR → searchable PDF**, PDF → Markdown, text or EPUB (OCR on scanned pages), **Markdown → PDF** (headings as bookmarks, lists, tables, code; text selectable), **Office → PDF**: Word, Excel and PowerPoint (.docx, .xlsx, .pptx) laid out with Typst, text selectable (page size, orientation, which sheets or slides), **PDF/A-2b** for archiving (fonts embedded, colour profile, XMP metadata; scripts and attachments removed) |
 | Images | Compress, resize, convert JPEG/PNG/WebP, strip EXIF/GPS/XMP without re-encoding, crop (drag a box over the image, or type the rectangle)/rotate/flip, in batches |
 
 ### Compression levels
@@ -70,6 +70,7 @@ bunx pdfvault encrypt contract.pdf --user-password '…'
 bunx pdfvault pdfa thesis.pdf --json                        # → thesis-pdfa.pdf, PDF/A-2b
 bunx pdfvault ocr scan.pdf && bunx pdfvault to-md scan-searchable.pdf
 bunx pdfvault md2pdf "notes/*.md" -o pdf/                  # → pdf/<name>.pdf, one per file
+bunx pdfvault office2pdf report.docx                       # → report.pdf (also .xlsx, .pptx)
 cat in.pdf | bunx pdfvault extract - --pages 2-4 -o - > part.pdf
 bunx pdfvault img strip "photos/*.jpg" -o clean/
 ```
@@ -105,7 +106,7 @@ npx skills add maxgfr/pdfvault -a codex    # or name them
 
 - **No network after load.** A Content Security Policy in a `<meta>` tag (GitHub Pages cannot send headers): `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; img-src 'self' blob: data:; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'`, plus `referrer: no-referrer`. Trusted Types only vouch for the app's own worker and service worker. Fonts, icons, scripts and the OCR model all ship from this repository's site.
 - **Checked in CI.** `scripts/check-no-network.ts` fails the build if the bundle contains an external URL that is not allowlisted with a reason, a network call to a literal URL, or a wasm module importing a network API. Playwright asserts zero cross-origin requests and zero CSP violations while every tool runs.
-- **Offline.** A service worker caches the app shell on first visit; the renderer and fonts are cached the first time a tool needs them. The OCR model is downloaded from the site itself only after you agree (31 MB), checked against its SHA-256 and kept in a cache app updates leave alone; the Privacy page lists it and deletes it. The test suite runs tools in airplane mode.
+- **Offline.** A service worker caches the app shell on first visit; the renderer, the Office converter and the fonts are cached the first time a tool needs them. The OCR model is downloaded from the site itself only after you agree (31 MB), checked against its SHA-256 and kept in a cache app updates leave alone; the Privacy page lists it and deletes it. The test suite runs tools in airplane mode.
 - **Memory.** Each job runs in its own Web Worker, terminated when the job ends, which frees all wasm memory. Inputs are size- and page-limited, and jobs time out.
 - **Encrypted vault (optional, off by default).** Keep files in IndexedDB, sealed with AES-256-GCM under a key derived from your passphrase with Argon2id (64 MiB, 3 passes) in the Rust engine and imported into WebCrypto as non-extractable. File names are encrypted too. It locks after 5 minutes idle or when the tab is hidden, and has an emergency wipe. Without it, nothing is stored.
 - **Verifiable builds.** The site is built and tested by GitHub Actions and deployed with a build provenance attestation (`gh attestation verify index.html -R maxgfr/pdfvault` on a downloaded file). Actions are pinned by commit SHA; `cargo deny`, `osv-scanner` and a fuzzing run of the PDF parser gate every push. Frames are refused by a script guard, since `frame-ancestors` needs a header.
@@ -118,10 +119,12 @@ crates/
              a content-stream interpreter for editing text and redacting, HarfRust + subsetter for writing it
   render/    hayro: rasterizing, positioned text, visual diff, the extreme level   (loaded on demand)
   ocr/       PP-OCRv6 on rten (ONNX): OCR in 50 languages                         (loaded on demand)
+  office/    office2pdf (Office XML → Typst → PDF): .docx, .xlsx, .pptx to PDF     (loaded on demand;
+             45 MB of wasm, 13 MB with brotli: Typst and its bundled fonts)
   wasm-*/    wasm-bindgen façades, one uniform run(op, inputs, options) each
   fixtures/  writes the generated test documents
 packages/
-  engine/    TypeScript API over the three wasm modules + the tool registry
+  engine/    TypeScript API over the four wasm modules + the tool registry
   cli/       the pdfvault command (Bun), compiled per platform with bun build --compile
   web/       React 19 site bundled with Bun, Web Worker, service worker, vault
 skills/pdfvault/  the agent skill
@@ -136,7 +139,7 @@ Requirements: Rust (pinned in `rust-toolchain.toml`, with the `wasm32-unknown-un
 
 ```sh
 bun install
-bun run fetch-models     # PP-OCRv6 models and Liberation fonts, pinned by SHA-256
+bun run fetch-models     # PP-OCRv6 models, Liberation, Carlito and Caladea fonts, pinned by SHA-256
 bun run build:wasm       # crates → packages/engine/wasm
 bun run fixtures         # generated test PDFs and images (no third-party binaries)
 cargo test --workspace   # Rust, incl. qpdf --check on outputs and OCR
@@ -158,14 +161,17 @@ Fuzzing: `cd fuzz && cargo +nightly fuzz run parse`.
 - A paragraph reflows inside itself, but nothing below it moves (a PDF has no flow): a paragraph made longer can run into the next one, and the editor says so. Text in vertical writing or at an angle is not offered. Bold or italic applies to a whole paragraph, not to a selection inside it.
 - When a changed line needs a character its embedded font lacks and the complete font is not installed (or, in the browser, Local Font Access is unavailable or refused), that character comes from Liberation Sans, Serif or Mono, close to but not the same as fonts other than Arial, Times and Courier.
 - Redaction turns a page into an image only when it cannot be sure (an image it cannot repaint, a font whose glyph positions are guessed); shapes crossing a box edge stay, hidden under it.
-- HEIC and AVIF photos are read only where the browser decodes them (Safari for HEIC): the page redraws them as JPEG. Elsewhere, and in the CLI (no HEVC decoder in pure Rust), export them as JPEG first. Office documents cannot be read; export them as PDF.
+- HEIC and AVIF photos are read only where the browser decodes them (Safari for HEIC): the page redraws them as JPEG. Elsewhere, and in the CLI (no HEVC decoder in pure Rust), export them as JPEG first.
+- Office to PDF reads .docx, .xlsx and .pptx only. Legacy binary files (.doc, .xls, .ppt) and password-protected ones are refused with what to do instead (save as .docx, .xlsx or .pptx; remove the password), and OpenDocument (.odt, .ods, .odp) is not read yet.
+- Office to PDF lays the document out again with Typst rather than with Office's own engine, so line and page breaks can differ, and some elements are approximated or left out (office2pdf lists, for example, DOCX decorative art page borders, picture crops that extend beyond the image, per-run languages); the report lists the warnings the converter gives. Fonts come from the document when it embeds them, otherwise from the bundled ones: Calibri and Cambria are drawn with the metric-compatible Carlito and Caladea, Arial, Times New Roman and Courier New with Liberation, and anything else falls back to Liberation Sans. The module is large (45 MB, 13 MB with brotli) and is downloaded the first time it is needed.
+- Office to PDF output is byte-for-byte reproducible, except with PDF/A, which stamps the conversion date and time.
 - The scanner finds a sheet that is lighter than what it lies on; on a white table, drag the corners. Its camera photos have the stream's resolution (often 1080p or 4K), not the camera app's. Receiving photos from the share sheet works where browsers support Web Share Target (Android), not on iOS.
 - WebP output is lossless (no lossy WebP encoder in pure Rust).
 - No threads in wasm: GitHub Pages cannot send the COOP/COEP headers they need.
 
 ## Credits
 
-Built on [lopdf](https://github.com/J-F-Liu/lopdf), [hayro](https://github.com/LaurenzV/hayro), [rten](https://github.com/robertknight/rten), [image](https://github.com/image-rs/image), [jpeg-encoder](https://github.com/vstroebel/jpeg-encoder), [miniz_oxide](https://github.com/Frommi/miniz_oxide) and [RustCrypto argon2](https://github.com/RustCrypto/password-hashes), [HarfRust](https://github.com/harfbuzz/harfrust), [skrifa](https://github.com/googlefonts/fontations), [subsetter](https://github.com/typst/subsetter) and [unicode-bidi](https://github.com/servo/unicode-bidi). The editor writes text with the [Liberation fonts](https://github.com/liberationfonts/liberation-fonts) (SIL Open Font License 1.1). PDF/A output embeds the sRGB and CGATS 001 (SWOP-compatible) colour profiles from [Compact-ICC-Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles) (CC0 1.0). The OCR models are [PP-OCRv6 small](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) by PaddlePaddle, licensed Apache-2.0, downloaded on first use. This software is based in part on the work of the Independent JPEG Group. Inspired by [PDFCraft](https://github.com/PDFCraftTool/pdfcraft) and [pdf-craft](https://github.com/oomol-lab/pdf-craft).
+Built on [lopdf](https://github.com/J-F-Liu/lopdf), [hayro](https://github.com/LaurenzV/hayro), [rten](https://github.com/robertknight/rten), [image](https://github.com/image-rs/image), [jpeg-encoder](https://github.com/vstroebel/jpeg-encoder), [miniz_oxide](https://github.com/Frommi/miniz_oxide) and [RustCrypto argon2](https://github.com/RustCrypto/password-hashes), [HarfRust](https://github.com/harfbuzz/harfrust), [skrifa](https://github.com/googlefonts/fontations), [subsetter](https://github.com/typst/subsetter) and [unicode-bidi](https://github.com/servo/unicode-bidi). Office files are converted by [office2pdf](https://github.com/developer0hye/office2pdf) and laid out by [Typst](https://github.com/typst/typst). The editor writes text with the [Liberation fonts](https://github.com/liberationfonts/liberation-fonts), and Office documents use them with [Carlito](https://github.com/googlefonts/carlito) and [Caladea](https://github.com/huertatipografica/Caladea) (all SIL Open Font License 1.1). PDF/A output embeds the sRGB and CGATS 001 (SWOP-compatible) colour profiles from [Compact-ICC-Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles) (CC0 1.0). The OCR models are [PP-OCRv6 small](https://huggingface.co/collections/PaddlePaddle/pp-ocrv6) by PaddlePaddle, licensed Apache-2.0, downloaded on first use. This software is based in part on the work of the Independent JPEG Group. Inspired by [PDFCraft](https://github.com/PDFCraftTool/pdfcraft) and [pdf-craft](https://github.com/oomol-lab/pdf-craft).
 
 ## License
 

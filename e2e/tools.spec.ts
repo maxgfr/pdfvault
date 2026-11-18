@@ -35,6 +35,7 @@ const cases: Case[] = [
   { id: "to-text", title: "PDF to text", slots: [["scan.pdf"]], expect: "text" },
   { id: "to-epub", title: "PDF to EPUB", slots: [["text-3.pdf"]], expect: "epub" },
   { id: "md2pdf", title: "Markdown to PDF", slots: [["notes.md"]], expect: "pdf" },
+  { id: "office2pdf", title: "Office to PDF", slots: [["sample.docx", "sample.pptx"]], expect: "pdf" },
   { id: "pdfa", title: "Convert to PDF/A", slots: [["text-3.pdf"]], expect: "pdf" },
   { id: "info", title: "PDF info", slots: [["photo.pdf"]], expect: "report" },
   { id: "img-compress", title: "Compress images", slots: [["photo.jpg"]], fill: { "JPEG quality": "40" }, expect: "jpg" },

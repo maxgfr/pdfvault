@@ -18,6 +18,7 @@ import {
   withDefaults,
   type Field,
   type ModelPackId,
+  type OfficeReport,
   type Options,
   type OutFile,
   type Tool,
@@ -160,6 +161,24 @@ const isImage = (b: Uint8Array) => {
   const at = (i: number, s: string) => [...s].every((c, j) => b[i + j] === c.charCodeAt(0));
   return (b[0] === 0xff && b[1] === 0xd8) || at(0, "\x89PNG") || at(0, "GIF8") || at(0, "BM") || (at(0, "RIFF") && at(8, "WEBP"));
 };
+const isZip = (b: Uint8Array) => b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04;
+
+/** The same words the office module uses for an OLE2 file. */
+const LEGACY_OFFICE = "legacy .doc, .xls and .ppt files are not supported; save as .docx, .xlsx or .pptx";
+
+/**
+ * Why an input cannot go to the Office converter, or null when it can: a zip
+ * named .docx, .xlsx or .pptx. A password-protected one is an OLE2 file the
+ * office module explains, and stdin is judged by the module alone.
+ */
+function officeProblem(input: Input): string | null {
+  const ext = input.name.toLowerCase().split(".").pop() ?? "";
+  if (input.path === null) return null;
+  if (/^(doc|xls|ppt)$/.test(ext)) return `${input.name}: ${LEGACY_OFFICE}`;
+  if (/^(odt|ods|odp)$/.test(ext)) return `${input.name}: OpenDocument files are not supported yet; save as .docx, .xlsx or .pptx`;
+  if (/^(docx|xlsx|pptx)$/.test(ext)) return null;
+  return `${input.name} is not a Word, Excel or PowerPoint file (.docx, .xlsx, .pptx)`;
+}
 
 function checkKinds(tool: Tool, inputs: Input[]) {
   const want = (i: number) => {
@@ -178,11 +197,21 @@ function checkKinds(tool: Tool, inputs: Input[]) {
         return i === 0 ? "pdf" : "image";
       case "markdown":
         return "text";
+      case "office":
+        return "office";
     }
   };
   inputs.forEach((input, i) => {
     const kind = want(i);
-    if (kind === "any" && !isPdf(input.bytes) && !isImage(input.bytes)) throw new UsageError(`${input.name} is neither a PDF nor an image`);
+    if (kind === "any" && !isPdf(input.bytes) && !isImage(input.bytes)) {
+      const problem = officeProblem(input);
+      if (problem && /\.(doc|xls|ppt|odt|ods|odp)$/i.test(input.name)) throw new UsageError(problem);
+      if (problem || !isZip(input.bytes)) throw new UsageError(`${input.name} is neither a PDF, an image nor an Office file`);
+    }
+    if (kind === "office") {
+      const problem = officeProblem(input);
+      if (problem) throw new UsageError(problem);
+    }
     if (kind === "pdf" && !isPdf(input.bytes)) throw new UsageError(`${input.name} is not a PDF`);
     if (kind === "image" && isPdf(input.bytes)) throw new UsageError(`${input.name} is a PDF; ${tool.id} expects images`);
     if (kind === "text" && (isPdf(input.bytes) || isImage(input.bytes) || input.bytes.includes(0))) throw new UsageError(`${input.name} is not a Markdown or text file`);
@@ -197,7 +226,7 @@ function checkKinds(tool: Tool, inputs: Input[]) {
 
 /** Group inputs into jobs: batch tools run once per file. */
 function jobs(tool: Tool, inputs: Input[]): Input[][] {
-  return tool.input === "pdf" || tool.input === "image" || tool.input === "markdown" ? inputs.map((i) => [i]) : [inputs];
+  return tool.input === "pdf" || tool.input === "image" || tool.input === "markdown" || tool.input === "office" ? inputs.map((i) => [i]) : [inputs];
 }
 
 async function isDir(path: string): Promise<boolean> {
@@ -229,7 +258,16 @@ function summary(tool: Tool, job: Input[], report: unknown, outputs: { path: str
     return `${src} → ${outputs[0] ? basename(outputs[0].path) : "-"}  ${human(before)} → ${human(after)} (−${pct}%)${note}`;
   }
   if (outputs.length === 0) return `${src}\n${JSON.stringify(report, null, 2)}`;
-  return `${src} → ${outputs.map((o) => `${basename(o.path)} (${human(o.bytes)})`).join(", ")}`;
+  const line = `${src} → ${outputs.map((o) => `${basename(o.path)} (${human(o.bytes)})`).join(", ")}`;
+  if (tool.id === "office2pdf" && r) {
+    // What the converter left out or approximated; --json has them all.
+    const warnings = (r.warnings as OfficeReport["warnings"] | undefined) ?? [];
+    const pages = Number(r.pages);
+    const shown = warnings.slice(0, 5).map((w) => `\n  ${w.kind === "fallback_used" ? "font" : "warning"}: ${w.message}`);
+    const more = warnings.length > shown.length ? `\n  … ${warnings.length - shown.length} more (see --json)` : "";
+    return `${line}, ${pages} page${pages === 1 ? "" : "s"}${shown.join("")}${more}`;
+  }
+  return line;
 }
 
 function help(tool?: Tool): string {
@@ -272,11 +310,12 @@ Exit codes: 0 success, 1 a file failed, 2 usage error.`;
     pdfs: "<pdf> <pdf> [pdf...]",
     image: "<image...>",
     images: "<image> [image...]",
-    mixed: "<pdf|image> [pdf|image...]",
+    mixed: "<pdf|image|office file> [pdf|image|office file...]",
     "pdf+image": "<pdf> <image>",
     "pdf+images": "<pdf> [image or font file...]",
     "pdf+pdf": "<pdf> <pdf>",
     markdown: "<markdown...>",
+    office: "<docx|xlsx|pptx...>",
   };
   return `pdfvault ${tool.id} ${inputs[tool.input]} [options]
 

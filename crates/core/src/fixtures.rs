@@ -447,3 +447,285 @@ pub fn markdown() -> Vec<u8> {
         .as_bytes()
         .to_vec()
 }
+
+// ------------------------------------------------------------ Office (OOXML)
+
+const XML_DECL: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#;
+const NS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const NS_PKG_REL: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+
+/// A zip of `(name, contents)` parts, in order.
+fn package(parts: Vec<(&str, Vec<u8>)>) -> Vec<u8> {
+    let files: Vec<(String, Vec<u8>)> =
+        parts.into_iter().map(|(n, c)| (n.to_string(), c)).collect();
+    crate::epub::zip(&files)
+}
+
+/// `[Content_Types].xml` with these defaults `(extension, type)` and overrides `(part, type)`.
+fn content_types(defaults: &[(&str, &str)], overrides: &[(&str, String)]) -> Vec<u8> {
+    let mut s = format!(
+        r#"{XML_DECL}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>"#
+    );
+    for (ext, ty) in defaults {
+        s += &format!(r#"<Default Extension="{ext}" ContentType="{ty}"/>"#);
+    }
+    for (part, ty) in overrides {
+        s += &format!(r#"<Override PartName="/{part}" ContentType="{ty}"/>"#);
+    }
+    s += "</Types>";
+    s.into_bytes()
+}
+
+/// A relationships part of `(id, type, target)`, the type relative to the
+/// officeDocument relationships namespace.
+fn relationships(rels: &[(&str, &str, &str)]) -> Vec<u8> {
+    let mut s = format!(r#"{XML_DECL}<Relationships xmlns="{NS_PKG_REL}">"#);
+    for (id, ty, target) in rels {
+        s += &format!(r#"<Relationship Id="{id}" Type="{NS_REL}/{ty}" Target="{target}"/>"#);
+    }
+    s += "</Relationships>";
+    s.into_bytes()
+}
+
+/// A Word document: a Heading 1 title, a paragraph with bold and italic runs,
+/// a bulleted list, a 3×3 table with borders and a PNG picture. Body text is
+/// Calibri and the heading Cambria, Word's defaults.
+pub fn docx() -> Vec<u8> {
+    const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let run = |text: &str, props: &str| {
+        format!(r#"<w:r><w:rPr>{props}</w:rPr><w:t xml:space="preserve">{text}</w:t></w:r>"#)
+    };
+    let bullet = |text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>{}</w:p>"#,
+            run(text, "")
+        )
+    };
+    let row = |cells: [&str; 3], header: bool| {
+        let props = if header { "<w:b/>" } else { "" };
+        let tcs: String = cells
+            .iter()
+            .map(|c| {
+                format!(
+                    r#"<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr><w:p>{}</w:p></w:tc>"#,
+                    run(c, props)
+                )
+            })
+            .collect();
+        format!("<w:tr>{tcs}</w:tr>")
+    };
+    let borders: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
+        .iter()
+        .map(|side| format!(r#"<w:{side} w:val="single" w:sz="4" w:space="0" w:color="000000"/>"#))
+        .collect();
+    // 300×120 px shown at 2 × 0.8 inches (914400 EMU per inch).
+    let (cx, cy) = (1_828_800, 731_520);
+    let picture = format!(
+        r#"<w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{cx}" cy="{cy}"/><wp:docPr id="1" name="Logo"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="logo.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId3"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#
+    );
+    let document = format!(
+        r#"{XML_DECL}<w:document xmlns:w="{W}" xmlns:r="{NS_REL}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>{title}</w:p><w:p>{p1}{p2}{p3}{p4}{p5}</w:p>{b1}{b2}{b3}<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:tblBorders>{borders}</w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>{r1}{r2}{r3}</w:tbl><w:p/>{picture}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>"#,
+        title = run("Quarterly report", ""),
+        p1 = run("Revenue grew by ", ""),
+        p2 = run("twelve percent", "<w:b/>"),
+        p3 = run(" over the quarter, ", ""),
+        p4 = run("café", "<w:i/>"),
+        p5 = run(" included.", ""),
+        b1 = bullet("Paper"),
+        b2 = bullet("Ink"),
+        b3 = bullet("Postage"),
+        r1 = row(["Item", "Q1", "Q2"], true),
+        r2 = row(["Paper", "120", "135"], false),
+        r3 = row(["Ink", "80", "95"], false),
+    );
+    let styles = format!(
+        r#"{XML_DECL}<w:styles xmlns:w="{W}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:lang w:val="en-US"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:rFonts w:ascii="Cambria" w:hAnsi="Cambria"/><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720"/></w:pPr></w:style></w:styles>"#
+    );
+    let numbering = format!(
+        r#"{XML_DECL}<w:numbering xmlns:w="{W}"><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+    );
+    let wml = "application/vnd.openxmlformats-officedocument.wordprocessingml";
+    package(vec![
+        (
+            "[Content_Types].xml",
+            content_types(
+                &[("png", "image/png")],
+                &[
+                    ("word/document.xml", format!("{wml}.document.main+xml")),
+                    ("word/styles.xml", format!("{wml}.styles+xml")),
+                    ("word/numbering.xml", format!("{wml}.numbering+xml")),
+                ],
+            ),
+        ),
+        (
+            "_rels/.rels",
+            relationships(&[("rId1", "officeDocument", "word/document.xml")]),
+        ),
+        ("word/document.xml", document.into_bytes()),
+        (
+            "word/_rels/document.xml.rels",
+            relationships(&[
+                ("rId1", "styles", "styles.xml"),
+                ("rId2", "numbering", "numbering.xml"),
+                ("rId3", "image", "media/image1.png"),
+            ]),
+        ),
+        ("word/styles.xml", styles.into_bytes()),
+        ("word/numbering.xml", numbering.into_bytes()),
+        (
+            "word/media/image1.png",
+            png(&image::DynamicImage::ImageRgb8(line_art(300, 120))),
+        ),
+    ])
+}
+
+/// An Excel workbook of two sheets: "Summary" (a bold title and a total whose
+/// formula, =SUM(Data!B2:B4), carries its cached value 335) and "Data" (a
+/// header row, three items and their amounts). Strings are shared.
+pub fn xlsx() -> Vec<u8> {
+    const S: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    let strings = [
+        "Quarterly summary",
+        "Total",
+        "Item",
+        "Amount",
+        "Paper",
+        "Ink",
+        "Postage",
+    ];
+    let items: String = strings
+        .iter()
+        .map(|s| format!("<si><t>{s}</t></si>"))
+        .collect();
+    let shared = format!(
+        r#"{XML_DECL}<sst xmlns="{S}" count="{n}" uniqueCount="{n}">{items}</sst>"#,
+        n = strings.len()
+    );
+    let sheet = |rows: &str| {
+        format!(
+            r#"{XML_DECL}<worksheet xmlns="{S}" xmlns:r="{NS_REL}"><cols><col min="1" max="1" width="24" customWidth="1"/><col min="2" max="2" width="12" customWidth="1"/></cols><sheetData>{rows}</sheetData><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>"#
+        )
+    };
+    let summary = sheet(
+        r#"<row r="1"><c r="A1" s="1" t="s"><v>0</v></c></row><row r="3"><c r="A3" t="s"><v>1</v></c><c r="B3"><f>SUM(Data!B2:B4)</f><v>335</v></c></row>"#,
+    );
+    let data = sheet(
+        r#"<row r="1"><c r="A1" s="1" t="s"><v>2</v></c><c r="B1" s="1" t="s"><v>3</v></c></row><row r="2"><c r="A2" t="s"><v>4</v></c><c r="B2"><v>120</v></c></row><row r="3"><c r="A3" t="s"><v>5</v></c><c r="B3"><v>80</v></c></row><row r="4"><c r="A4" t="s"><v>6</v></c><c r="B4"><v>135</v></c></row>"#,
+    );
+    let workbook = format!(
+        r#"{XML_DECL}<workbook xmlns="{S}" xmlns:r="{NS_REL}"><sheets><sheet name="Summary" sheetId="1" r:id="rId1"/><sheet name="Data" sheetId="2" r:id="rId2"/></sheets><calcPr calcId="191029"/></workbook>"#
+    );
+    let styles = format!(
+        r#"{XML_DECL}<styleSheet xmlns="{S}"><fonts count="2"><font><sz val="11"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="11"/><name val="Calibri"/><family val="2"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>"#
+    );
+    let sml = "application/vnd.openxmlformats-officedocument.spreadsheetml";
+    package(vec![
+        (
+            "[Content_Types].xml",
+            content_types(
+                &[],
+                &[
+                    ("xl/workbook.xml", format!("{sml}.sheet.main+xml")),
+                    ("xl/worksheets/sheet1.xml", format!("{sml}.worksheet+xml")),
+                    ("xl/worksheets/sheet2.xml", format!("{sml}.worksheet+xml")),
+                    ("xl/sharedStrings.xml", format!("{sml}.sharedStrings+xml")),
+                    ("xl/styles.xml", format!("{sml}.styles+xml")),
+                ],
+            ),
+        ),
+        (
+            "_rels/.rels",
+            relationships(&[("rId1", "officeDocument", "xl/workbook.xml")]),
+        ),
+        ("xl/workbook.xml", workbook.into_bytes()),
+        (
+            "xl/_rels/workbook.xml.rels",
+            relationships(&[
+                ("rId1", "worksheet", "worksheets/sheet1.xml"),
+                ("rId2", "worksheet", "worksheets/sheet2.xml"),
+                ("rId3", "sharedStrings", "sharedStrings.xml"),
+                ("rId4", "styles", "styles.xml"),
+            ]),
+        ),
+        ("xl/worksheets/sheet1.xml", summary.into_bytes()),
+        ("xl/worksheets/sheet2.xml", data.into_bytes()),
+        ("xl/sharedStrings.xml", shared.into_bytes()),
+        ("xl/styles.xml", styles.into_bytes()),
+    ])
+}
+
+/// A 16:9 PowerPoint deck of two slides, each a title and a text box:
+/// "Roadmap", then "Next steps".
+pub fn pptx() -> Vec<u8> {
+    pptx_with(false)
+}
+
+/// [`pptx`] with its second slide marked hidden.
+pub fn pptx_hidden_slide() -> Vec<u8> {
+    pptx_with(true)
+}
+
+fn pptx_with(hide_second: bool) -> Vec<u8> {
+    const NS: &str = r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main""#;
+    let text_box = |id: u32, name: &str, y: u32, cy: u32, size: u32, text: &str| {
+        format!(
+            r#"<p:sp><p:nvSpPr><p:cNvPr id="{id}" name="{name}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="838200" y="{y}"/><a:ext cx="10515600" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr wrap="square"/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="{size}"><a:latin typeface="Calibri"/></a:rPr><a:t>{text}</a:t></a:r></a:p></p:txBody></p:sp>"#
+        )
+    };
+    let slide = |title: &str, body: &str, hidden: bool| {
+        format!(
+            r#"{XML_DECL}<p:sld {NS}{show}><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>{t}{b}</p:spTree></p:cSld></p:sld>"#,
+            show = if hidden { r#" show="0""# } else { "" },
+            t = text_box(2, "Title", 457_200, 1_325_563, 4000, title),
+            b = text_box(3, "Text", 2_057_400, 3_000_000, 2400, body),
+        )
+    };
+    let presentation = format!(
+        r#"{XML_DECL}<p:presentation {NS}><p:sldIdLst><p:sldId id="256" r:id="rId1"/><p:sldId id="257" r:id="rId2"/></p:sldIdLst><p:sldSz cx="12192000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>"#
+    );
+    let pml = "application/vnd.openxmlformats-officedocument.presentationml";
+    package(vec![
+        (
+            "[Content_Types].xml",
+            content_types(
+                &[],
+                &[
+                    (
+                        "ppt/presentation.xml",
+                        format!("{pml}.presentation.main+xml"),
+                    ),
+                    ("ppt/slides/slide1.xml", format!("{pml}.slide+xml")),
+                    ("ppt/slides/slide2.xml", format!("{pml}.slide+xml")),
+                ],
+            ),
+        ),
+        (
+            "_rels/.rels",
+            relationships(&[("rId1", "officeDocument", "ppt/presentation.xml")]),
+        ),
+        ("ppt/presentation.xml", presentation.into_bytes()),
+        (
+            "ppt/_rels/presentation.xml.rels",
+            relationships(&[
+                ("rId1", "slide", "slides/slide1.xml"),
+                ("rId2", "slide", "slides/slide2.xml"),
+            ]),
+        ),
+        (
+            "ppt/slides/slide1.xml",
+            slide("Roadmap", "Ship the Office converter", false).into_bytes(),
+        ),
+        (
+            "ppt/slides/slide2.xml",
+            slide("Next steps", "OpenDocument formats", hide_second).into_bytes(),
+        ),
+    ])
+}
+
+/// What a legacy .doc (or .xls, .ppt) starts with: an OLE2 compound file
+/// header, then nothing usable.
+pub fn legacy_doc() -> Vec<u8> {
+    let mut v = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+    v.resize(1024, 0);
+    v
+}

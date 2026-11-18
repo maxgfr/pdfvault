@@ -1,4 +1,4 @@
-import { EngineError, outputName, withDefaults, type ModelPackId, type Options, type Tool } from "@pdfvault/engine";
+import { EngineError, outputName, withDefaults, type ModelPackId, type ModuleName, type Options, type Tool } from "@pdfvault/engine";
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { FieldInput, visible } from "./fields.tsx";
 import { Icon } from "./icons.tsx";
@@ -91,10 +91,11 @@ export function ShareButton({ name, data, className = "secondary small" }: { nam
 
 /** Batch tools run once per file of their first slot; the others once over every slot. */
 function jobsOf(g: Group): InFile[][] {
-  return g.tool.input === "pdf" || g.tool.input === "image" || g.tool.input === "markdown" ? g.slots[0]!.map((f) => [f]) : [g.slots.flat()];
+  return g.tool.input === "pdf" || g.tool.input === "image" || g.tool.input === "markdown" || g.tool.input === "office" ? g.slots[0]!.map((f) => [f]) : [g.slots.flat()];
 }
 
-const heavyOf = (t: Tool) => (t.heavy === "ocr" ? (["render", "ocr"] as const) : t.heavy === "render" ? (["render"] as const) : ([] as const));
+const HEAVY = { render: ["render"], ocr: ["render", "ocr"], office: ["office"] } as const satisfies Record<NonNullable<Tool["heavy"]>, readonly ModuleName[]>;
+const heavyOf = (t: Tool): readonly ModuleName[] => (t.heavy ? HEAVY[t.heavy] : []);
 
 interface Props {
   groups: Group[];
@@ -130,8 +131,7 @@ export function ActionPanel({ groups, ready, hint, submitLabel, fileActions, res
     // Start compiling what the tools need while the user sets options.
     warmUp("core");
     for (const g of groups) {
-      if (g.tool.heavy) warmUp("render");
-      if (g.tool.heavy === "ocr") warmUp("ocr");
+      for (const name of heavyOf(g.tool)) warmUp(name);
     }
     // Options and results belong to one set of tools.
     setOptions(Object.fromEntries(groups.map((g) => [g.tool.id, withDefaults(g.tool, {})])));

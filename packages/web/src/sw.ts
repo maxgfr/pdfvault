@@ -1,8 +1,9 @@
 /// <reference lib="webworker" />
 // Offline support. The build replaces __MANIFEST__ with the hashed list of
-// files: the app shell is cached at install; the page renderer and the fonts
-// are cached the first time a tool needs them. OCR models are not handled
-// here: the page downloads them on request into their own cache (models.ts).
+// files: the app shell is cached at install; the page renderer, the Office
+// converter and the fonts are cached the first time a tool needs them. OCR
+// models are not handled here: the page downloads them on request into their
+// own cache (models.ts).
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 declare const __MANIFEST__: { version: string; precache: string[]; lazy: string[] };

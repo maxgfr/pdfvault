@@ -38,3 +38,10 @@ export interface CompressReport {
   removed: string[];
   images: ImageReport[];
 }
+
+export interface OfficeReport {
+  format: "docx" | "xlsx" | "pptx";
+  pages: number;
+  /** What the converter left out or approximated. */
+  warnings: { kind: "unsupported_element" | "partial_element" | "fallback_used" | "parse_skipped"; message: string }[];
+}

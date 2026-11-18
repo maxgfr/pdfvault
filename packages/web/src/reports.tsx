@@ -1,4 +1,4 @@
-import type { CompressReport, PdfaReport } from "@pdfvault/engine";
+import type { CompressReport, OfficeReport, PdfaReport } from "@pdfvault/engine";
 import { useEffect, useMemo } from "react";
 
 export const bytes = (n: number) =>
@@ -133,10 +133,42 @@ function Pdfa({ r }: { r: PdfaReport }) {
   );
 }
 
+function Office({ r }: { r: OfficeReport }) {
+  // A font drawn with its stand-in (Calibri as Carlito) is expected; the rest is worth reading.
+  const fonts = r.warnings.filter((w) => w.kind === "fallback_used");
+  const other = r.warnings.filter((w) => w.kind !== "fallback_used");
+  return (
+    <div className="report">
+      <p className="verdict">
+        {r.pages} page{r.pages === 1 ? "" : "s"}.{" "}
+        {other.length ? `Some of the document could not be reproduced exactly (${other.length}):` : "The converter reported nothing it could not reproduce."}
+      </p>
+      {other.length ? (
+        <ul className="facts">
+          {other.map((w, i) => (
+            <li key={i}>{w.message}</li>
+          ))}
+        </ul>
+      ) : null}
+      {fonts.length ? (
+        <details>
+          <summary>Fonts drawn with a stand-in ({fonts.length})</summary>
+          <ul className="facts">
+            {fonts.map((w, i) => (
+              <li key={i}>{w.message}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 export function Report({ toolId, report, files }: { toolId: string; report: unknown; files: { name: string; bytes: Uint8Array }[] }) {
   if (report === null || report === undefined) return null;
   if (toolId === "compress") return <Compress r={report as CompressReport} />;
   if (toolId === "pdfa") return <Pdfa r={report as PdfaReport} />;
+  if (toolId === "office2pdf") return <Office r={report as OfficeReport} />;
   if (toolId === "compare") return <Compare r={report as { identical: boolean; pages: Diff[] }} images={files.filter((f) => f.name.endsWith(".png"))} />;
   if (toolId === "info") {
     const r = report as Record<string, unknown> & { metadata: Record<string, string>; security: Record<string, unknown> };

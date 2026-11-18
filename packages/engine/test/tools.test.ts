@@ -348,6 +348,55 @@ describe("text and OCR", () => {
   }, 120_000);
 });
 
+describe("office", () => {
+  const textOf = async (pdf: Uint8Array) => new TextDecoder().decode((await run("to-text", [pdf], { ocr: false })).files[0]!.bytes);
+
+  test("office2pdf converts each format with the bundled fonts", async () => {
+    const cases = [
+      { name: "sample.docx", format: "docx", pages: 1, text: ["Quarterly report", "twelve percent", "café", "Postage"] },
+      { name: "sample.xlsx", format: "xlsx", pages: 2, text: ["Quarterly summary", "335", "Postage"] },
+      { name: "sample.pptx", format: "pptx", pages: 2, text: ["Roadmap", "Next steps"] },
+    ];
+    for (const c of cases) {
+      const r = await run("office2pdf", [await fixture(c.name)]);
+      const pdf = firstPdf(r);
+      expect(r.files[0]!.suffix).toBe("");
+      await qpdfCheck(pdf);
+      expect(r.report).toMatchObject({ format: c.format, pages: c.pages });
+      expect(await pages(pdf)).toBe(c.pages);
+      const text = await textOf(pdf);
+      for (const want of c.text) expect(text).toContain(want);
+    }
+  }, 60_000);
+
+  test("office2pdf options: sheets, slides, page size and orientation", async () => {
+    const data = await run("office2pdf", [await fixture("sample.xlsx")], { sheets: " Data , " });
+    expect(data.report).toMatchObject({ pages: 1 });
+    expect(await textOf(firstPdf(data))).not.toContain("Quarterly summary");
+    const second = await run("office2pdf", [await fixture("sample.pptx")], { slides: "2" });
+    expect(await textOf(firstPdf(second))).toContain("Next steps");
+    expect(second.report).toMatchObject({ pages: 1 });
+    const letter = firstPdf(await run("office2pdf", [await fixture("sample.docx")], { paperSize: "letter", orientation: "landscape" }));
+    const info = await engine.core<{ pageSizes: { width: number; height: number }[] }>("info", [letter]);
+    expect(info.report.pageSizes[0]).toMatchObject({ width: 792, height: 612 });
+  }, 60_000);
+
+  test("office2pdf output is reproducible; legacy files are refused", async () => {
+    const doc = await fixture("sample.docx");
+    expect(firstPdf(await run("office2pdf", [doc]))).toEqual(firstPdf(await run("office2pdf", [doc])));
+    const e = await run("office2pdf", [await fixture("legacy.doc")]).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(EngineError);
+    expect(e).toMatchObject({ code: "unsupported" });
+    expect((e as EngineError).message).toContain("save as .docx, .xlsx or .pptx");
+  }, 60_000);
+
+  test("combine converts Office files in place", async () => {
+    const r = await run("combine", [await fixture("sample.pptx"), await fixture("photo.jpg"), await fixture("text-3.pdf")]);
+    await qpdfCheck(firstPdf(r));
+    expect(r.report).toMatchObject({ pages: 6, inputs: 3 });
+  }, 60_000);
+});
+
 describe("scan", () => {
   test("photos become a PDF, black and white is smaller", async () => {
     const photo = await fixture("photo.jpg");

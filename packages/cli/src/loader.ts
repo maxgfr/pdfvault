@@ -3,7 +3,16 @@
 // among them: they are read from the model folder (models.ts).
 import coreWasm from "../../engine/wasm/core/core_bg.wasm" with { type: "file" };
 import ocrWasm from "../../engine/wasm/ocr/ocr_bg.wasm" with { type: "file" };
+import officeWasm from "../../engine/wasm/office/office_bg.wasm" with { type: "file" };
 import renderWasm from "../../engine/wasm/render/render_bg.wasm" with { type: "file" };
+import caladeaBold from "../../../models/fonts/Caladea-Bold.ttf" with { type: "file" };
+import caladeaBoldItalic from "../../../models/fonts/Caladea-BoldItalic.ttf" with { type: "file" };
+import caladeaItalic from "../../../models/fonts/Caladea-Italic.ttf" with { type: "file" };
+import caladeaRegular from "../../../models/fonts/Caladea-Regular.ttf" with { type: "file" };
+import carlitoBold from "../../../models/fonts/Carlito-Bold.ttf" with { type: "file" };
+import carlitoBoldItalic from "../../../models/fonts/Carlito-BoldItalic.ttf" with { type: "file" };
+import carlitoItalic from "../../../models/fonts/Carlito-Italic.ttf" with { type: "file" };
+import carlitoRegular from "../../../models/fonts/Carlito-Regular.ttf" with { type: "file" };
 import monoBold from "../../../models/fonts/LiberationMono-Bold.ttf" with { type: "file" };
 import monoBoldItalic from "../../../models/fonts/LiberationMono-BoldItalic.ttf" with { type: "file" };
 import monoItalic from "../../../models/fonts/LiberationMono-Italic.ttf" with { type: "file" };
@@ -26,7 +35,7 @@ const at = (path: string) => (path.startsWith(".") ? join(import.meta.dir, path)
 
 // wasm-pack's own .d.ts types these imports as modules; with `type: "file"` they are paths.
 const path = (p: unknown) => p as string;
-const wasm = { core: path(coreWasm), render: path(renderWasm), ocr: path(ocrWasm) };
+const wasm = { core: path(coreWasm), render: path(renderWasm), ocr: path(ocrWasm), office: path(officeWasm) };
 const fonts: Record<FontFile, string> = {
   "LiberationSans-Regular.ttf": path(sansRegular),
   "LiberationSans-Bold.ttf": path(sansBold),
@@ -40,6 +49,14 @@ const fonts: Record<FontFile, string> = {
   "LiberationMono-Bold.ttf": path(monoBold),
   "LiberationMono-Italic.ttf": path(monoItalic),
   "LiberationMono-BoldItalic.ttf": path(monoBoldItalic),
+  "Carlito-Regular.ttf": path(carlitoRegular),
+  "Carlito-Bold.ttf": path(carlitoBold),
+  "Carlito-Italic.ttf": path(carlitoItalic),
+  "Carlito-BoldItalic.ttf": path(carlitoBoldItalic),
+  "Caladea-Regular.ttf": path(caladeaRegular),
+  "Caladea-Bold.ttf": path(caladeaBold),
+  "Caladea-Italic.ttf": path(caladeaItalic),
+  "Caladea-BoldItalic.ttf": path(caladeaBoldItalic),
 };
 
 export const loader: Loader = {

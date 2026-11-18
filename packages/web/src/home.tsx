@@ -118,8 +118,8 @@ export function Home() {
             PDF tools that never <em>upload</em> your files.
           </h1>
           <p className="lede">
-            Compress, edit, merge, protect, OCR and convert PDFs and images. Everything runs in this tab, in WebAssembly. No
-            server, no account, and it keeps working offline.
+            Compress, edit, merge, protect, OCR and convert PDFs, images and Office files. Everything runs in this tab, in
+            WebAssembly. No server, no account, and it keeps working offline.
           </p>
           <ul className="promises">
             <li>

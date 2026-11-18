@@ -1,7 +1,9 @@
-// The fonts the editor writes text with when the PDF's own font will not do:
-// Liberation Sans, Serif and Mono (SIL OFL 1.1), metric-compatible with
-// Arial, Times New Roman and Courier New. `bun run fetch-models` puts them in
-// models/fonts; the site serves them from fonts/ and the CLI embeds them.
+// The fonts the engine writes text with when the document's own font will
+// not do: Liberation Sans, Serif and Mono (SIL OFL 1.1), metric-compatible
+// with Arial, Times New Roman and Courier New, and for Office documents
+// Carlito and Caladea (SIL OFL 1.1), metric-compatible with Calibri and
+// Cambria. `bun run fetch-models` puts them in models/fonts; the site serves
+// them from fonts/ and the CLI embeds them.
 
 export const BUNDLED_FONTS = {
   "sans-regular": "LiberationSans-Regular.ttf",
@@ -16,6 +18,14 @@ export const BUNDLED_FONTS = {
   "mono-bold": "LiberationMono-Bold.ttf",
   "mono-italic": "LiberationMono-Italic.ttf",
   "mono-bolditalic": "LiberationMono-BoldItalic.ttf",
+  "carlito-regular": "Carlito-Regular.ttf",
+  "carlito-bold": "Carlito-Bold.ttf",
+  "carlito-italic": "Carlito-Italic.ttf",
+  "carlito-bolditalic": "Carlito-BoldItalic.ttf",
+  "caladea-regular": "Caladea-Regular.ttf",
+  "caladea-bold": "Caladea-Bold.ttf",
+  "caladea-italic": "Caladea-Italic.ttf",
+  "caladea-bolditalic": "Caladea-BoldItalic.ttf",
 } as const;
 
 export type FontKey = keyof typeof BUNDLED_FONTS;

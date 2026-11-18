@@ -5,13 +5,16 @@ import { parseEdits, redactionBoxes, type EditReport } from "./edit.ts";
 import { isFontKey, type FontKey } from "./fonts.ts";
 import type { Engine, OcrLine, OutFile, RunResult } from "./engine.ts";
 import { EngineError } from "./errors.ts";
-import type { PdfaReport } from "./reports.ts";
+import type { OfficeReport, PdfaReport } from "./reports.ts";
 
 export type Category = "compress" | "organize" | "edit" | "security" | "convert" | "image";
 
 /** What a tool consumes. Batch tools run once per input file. */
-/** `mixed` takes PDFs and images in any order; `markdown` is UTF-8 text, one file per run. */
-export type InputKind = "pdf" | "pdfs" | "image" | "images" | "mixed" | "pdf+image" | "pdf+images" | "pdf+pdf" | "markdown";
+/**
+ * `mixed` takes PDFs, images and Office files in any order; `markdown` is UTF-8
+ * text and `office` a .docx, .xlsx or .pptx file, one file per run.
+ */
+export type InputKind = "pdf" | "pdfs" | "image" | "images" | "mixed" | "pdf+image" | "pdf+images" | "pdf+pdf" | "markdown" | "office";
 
 interface FieldBase {
   name: string;
@@ -53,8 +56,8 @@ export interface Tool {
   fields: Field[];
   /** CLI spellings that map to this tool, e.g. ["img compress"]. */
   aliases?: string[];
-  /** Loads the renderer (and maybe OCR): slower first run. */
-  heavy?: "render" | "ocr";
+  /** Loads the renderer (and maybe OCR), or the Office converter: slower first run. */
+  heavy?: "render" | "ocr" | "office";
   run(engine: Engine, inputs: Uint8Array[], options: Options, progress?: Progress): Promise<RunResult>;
 }
 
@@ -89,6 +92,33 @@ const pagesField = (label = "Pages", help = "For example 1-3,7,10-. Empty means 
 const pw = (o: Options) => ({ password: str(o.password) });
 
 const isPdf = (b: Uint8Array) => new TextDecoder().decode(b.subarray(0, 1024)).includes("%PDF-");
+/** A zip: what a .docx, .xlsx or .pptx is. The office module checks the parts. */
+const isZip = (b: Uint8Array) => b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04;
+
+/** The fonts Office documents are drawn with: Liberation, then Carlito (Calibri) and Caladea (Cambria). */
+const OFFICE_FONTS: FontKey[] = (["sans", "serif", "mono", "carlito", "caladea"] as const).flatMap((family) =>
+  (["regular", "bold", "italic", "bolditalic"] as const).map((style): FontKey => `${family}-${style}`),
+);
+
+/** One Office document to PDF, with the bundled fonts; Liberation Sans when nothing else fits. */
+async function officeToPdf(engine: Engine, doc: Uint8Array, o: Options) {
+  const fonts = await Promise.all(OFFICE_FONTS.map((k) => engine.font(k)));
+  const orientation = str(o.orientation);
+  const paperSize = str(o.paperSize);
+  const sheets = str(o.sheets)
+    ?.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return engine.office<OfficeReport>("office2pdf", [doc, ...fonts], {
+    paperSize: paperSize === "auto" ? undefined : paperSize,
+    landscape: orientation === "landscape" ? true : orientation === "portrait" ? false : undefined,
+    sheets: sheets?.length ? sheets : undefined,
+    slides: str(o.slides),
+    includeHiddenSlides: bool(o.includeHiddenSlides),
+    pdfA: bool(o.pdfA),
+    fallbackFont: "Liberation Sans",
+  });
+}
 
 /** How images are laid out on pages (Images to PDF, Combine). */
 const imagePageFields: Field[] = [
@@ -280,23 +310,28 @@ export const tools: Tool[] = [
   {
     id: "combine",
     title: "Combine into one PDF",
-    summary: "PDFs and photos together, in the order given: each image becomes a page.",
+    summary: "PDFs, photos and Office files together, in the order given: each image becomes a page.",
     category: "organize",
     input: "mixed",
     aliases: ["join"],
     fields: [...imagePageFields, password],
-    async run(engine, inputs, o) {
-      // Runs of consecutive images become one PDF each, then everything is merged.
+    async run(engine, inputs, o, progress) {
+      // Runs of consecutive images become one PDF each, Office files are
+      // converted at their own size, then everything is merged.
       const parts: Uint8Array[] = [];
       let images: Uint8Array[] = [];
       const flush = async () => {
         if (images.length) parts.push((await engine.core("img2pdf", images, imagePageOptions(o))).files[0]!.bytes);
         images = [];
       };
-      for (const b of inputs) {
+      for (const [i, b] of inputs.entries()) {
         if (isPdf(b)) {
           await flush();
           parts.push(b);
+        } else if (isZip(b)) {
+          await flush();
+          progress?.(i, inputs.length, "Converting the Office file");
+          parts.push((await officeToPdf(engine, b, {})).files[0]!.bytes);
         } else images.push(b);
       }
       await flush();
@@ -1015,6 +1050,52 @@ export const tools: Tool[] = [
         pageNumbers: o.pageNumbers === undefined ? true : bool(o.pageNumbers),
       });
     },
+  },
+  {
+    id: "office2pdf",
+    title: "Office to PDF",
+    summary: "Word, Excel and PowerPoint files (.docx, .xlsx, .pptx) to PDF, laid out on your device.",
+    category: "convert",
+    input: "office",
+    heavy: "office",
+    aliases: ["from-docx", "from-xlsx", "from-pptx"],
+    fields: [
+      {
+        kind: "select",
+        name: "paperSize",
+        label: "Page size",
+        default: "auto",
+        choices: [
+          { value: "auto", label: "The document's own" },
+          { value: "a4", label: "A4" },
+          { value: "letter", label: "US Letter" },
+          { value: "legal", label: "US Legal" },
+        ],
+      },
+      {
+        kind: "select",
+        name: "orientation",
+        label: "Orientation",
+        default: "auto",
+        choices: [
+          { value: "auto", label: "The document's own" },
+          { value: "portrait", label: "Portrait" },
+          { value: "landscape", label: "Landscape" },
+        ],
+      },
+      { kind: "text", name: "sheets", label: "Sheets", help: "Excel: only these sheets, by name, comma-separated.", placeholder: "all", advanced: true },
+      { kind: "text", name: "slides", label: "Slides", help: "PowerPoint: one slide or a range, for example 2-5.", placeholder: "all", advanced: true },
+      { kind: "boolean", name: "includeHiddenSlides", label: "Include hidden slides", help: "PowerPoint.", default: false, advanced: true },
+      {
+        kind: "boolean",
+        name: "pdfA",
+        label: "PDF/A-2b for archiving",
+        help: "Stamps the conversion date, so two runs give different bytes.",
+        default: false,
+        advanced: true,
+      },
+    ],
+    run: (engine, [doc], o) => officeToPdf(engine, doc!, o),
   },
   {
     id: "pdfa",
