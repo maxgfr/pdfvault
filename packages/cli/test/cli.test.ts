@@ -12,7 +12,7 @@ let dir: string;
 
 beforeAll(async () => {
   dir = await realpath(await mkdtemp(join(tmpdir(), "pdfvault-cli-")));
-  for (const f of ["text-3.pdf", "text-5.pdf", "photo.pdf", "corrupt.pdf", "photo.jpg", "locked.pdf", "notes.md"]) {
+  for (const f of ["text-3.pdf", "text-5.pdf", "photo.pdf", "corrupt.pdf", "photo.jpg", "locked.pdf", "notes.md", "sample.docx", "sample.xlsx", "sample.pptx", "legacy.doc"]) {
     await cp(`${fixtures}/${f}`, `${dir}/${f}`);
   }
 });
@@ -140,6 +140,41 @@ describe("running", () => {
     expect(r.code).toBe(0);
     expect(JSON.parse(r.out).results[0].report).toMatchObject({ pages: 4 });
     expect(cli(["combine", "edits-missing.txt"]).code).toBe(2);
+  });
+
+  test("office2pdf converts Word, Excel and PowerPoint files", async () => {
+    const docx = cli(["office2pdf", "sample.docx", "--json"]);
+    expect(docx.code).toBe(0);
+    const res = JSON.parse(docx.out).results[0];
+    expect(res.outputs[0].path).toBe(join(dir, "sample.pdf"));
+    expect(res.report).toMatchObject({ format: "docx", pages: 1 });
+    const pdf = new Uint8Array(await Bun.file(`${dir}/sample.pdf`).arrayBuffer());
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe("%PDF-");
+    // The same name with another extension would be sample.pdf too: name them.
+    const xlsx = JSON.parse(cli(["office2pdf", "sample.xlsx", "-o", "sheets.pdf", "--sheets", "Data", "--json"]).out).results[0];
+    expect(xlsx.report).toMatchObject({ format: "xlsx", pages: 1 });
+    const pptx = cli(["from-pptx", "sample.pptx", "-o", "deck.pdf", "--slides", "2-2"]);
+    expect(pptx.code).toBe(0);
+    expect(pptx.err).toContain("deck.pdf");
+    expect(pptx.err).toContain("1 page");
+  });
+
+  test("office2pdf refuses legacy and non-Office files with what to do instead", async () => {
+    const legacy = cli(["office2pdf", "legacy.doc"]);
+    expect(legacy.code).toBe(2);
+    expect(legacy.err).toContain("legacy.doc: legacy .doc, .xls and .ppt files are not supported; save as .docx, .xlsx or .pptx");
+    expect(cli(["office2pdf", "text-3.pdf"]).err).toContain("is not a Word, Excel or PowerPoint file");
+    // On stdin the bytes decide, and the office module gives the same reason.
+    const piped = cli(["office2pdf", "-", "-o", "-"], new Uint8Array(await Bun.file(`${fixtures}/legacy.doc`).arrayBuffer()));
+    expect(piped.code).toBe(1);
+    expect(piped.err).toContain("legacy .doc, .xls and .ppt files are not supported");
+  });
+
+  test("combine converts an Office file in its place", () => {
+    const r = cli(["combine", "sample.pptx", "text-3.pdf", "-o", "slides-and-text.pdf", "--json"]);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out).results[0].report).toMatchObject({ pages: 5 });
+    expect(cli(["combine", "legacy.doc", "text-3.pdf"]).err).toContain("legacy .doc, .xls and .ppt files are not supported");
   });
 
   test("pdfa embeds the standard fonts and reports what it changed", async () => {

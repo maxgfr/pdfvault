@@ -53,17 +53,17 @@ await Bun.write(
     '<link rel="icon" href="./icon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="./icon-192.png"><link rel="manifest" href="./manifest.webmanifest"></head>',
   ),
 );
-for (const name of ["core", "render", "ocr"]) {
+for (const name of ["core", "render", "ocr", "office"]) {
   await mkdir(`${dist}/wasm`, { recursive: true });
   await cp(`${root}packages/engine/wasm/${name}/${name}_bg.wasm`, `${dist}/wasm/${name}.wasm`);
 }
 // The OCR models, served for users to download when they first need OCR.
 await mkdir(`${dist}/models`, { recursive: true });
 for (const { name } of servedFiles) await cp(`${root}models/${name}`, `${dist}/models/${name}`);
-// The fonts the editor writes and previews text with (SIL OFL 1.1, licence alongside).
+// The fonts the editor and the Office converter write text with (SIL OFL 1.1, licences alongside).
 await mkdir(`${dist}/fonts`, { recursive: true });
 for (const f of await readdir(`${root}models/fonts`)) {
-  if (f.endsWith(".ttf")) await cp(`${root}models/fonts/${f}`, `${dist}/fonts/${f}`);
+  if (f.endsWith(".ttf") || f.endsWith("-OFL.txt")) await cp(`${root}models/fonts/${f}`, `${dist}/fonts/${f}`);
 }
 await cp(`${root}models/fonts/LICENSE`, `${dist}/fonts/LICENSE.txt`);
 await Bun.write(`${dist}/.nojekyll`, "");
@@ -85,7 +85,7 @@ for await (const p of walk(dist)) {
   hash.update(rel).update(new Uint8Array(await Bun.file(p).arrayBuffer()));
 }
 files.sort();
-const lazy = files.filter((f) => f.startsWith("fonts/") || f === "wasm/render.wasm" || f === "wasm/ocr.wasm");
+const lazy = files.filter((f) => f.startsWith("fonts/") || f === "wasm/render.wasm" || f === "wasm/ocr.wasm" || f === "wasm/office.wasm");
 // Models stay out of both lists: only the user's "Download" puts them on the device.
 const precache = ["./", ...files.filter((f) => f !== "index.html" && !f.startsWith("models/") && !lazy.includes(f))];
 const manifest = { version: hash.digest("hex").slice(0, 16), precache, lazy };

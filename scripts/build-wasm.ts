@@ -1,10 +1,10 @@
-// Build the three wasm modules into packages/engine/wasm/<name>.
-// Usage: bun scripts/build-wasm.ts [core|render|ocr ...]
+// Build the wasm modules into packages/engine/wasm/<name>.
+// Usage: bun scripts/build-wasm.ts [core|render|ocr|office ...]
 import { $ } from "bun";
 import { rm, stat } from "node:fs/promises";
 
 const root = new URL("..", import.meta.url).pathname;
-const all = ["core", "render", "ocr"] as const;
+const all = ["core", "render", "ocr", "office"] as const;
 const wanted = process.argv.slice(2);
 const names = wanted.length ? all.filter((n) => wanted.includes(n)) : all;
 

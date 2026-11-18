@@ -10,6 +10,7 @@ export interface JobResult {
 
 const TIMEOUT_MS = 20 * 60 * 1000;
 const compiled = new Map<ModuleName, Promise<WebAssembly.Module>>();
+const LOADING: Record<ModuleName, string> = { core: "engine", render: "page renderer", ocr: "text recognition", office: "Office converter" };
 
 /** Compile each wasm module once per page load; workers reuse the result. */
 function compile(name: ModuleName): Promise<WebAssembly.Module> {
@@ -36,7 +37,7 @@ export async function runJob(
 ): Promise<JobResult> {
   const modules: JobRequest["modules"] = {};
   for (const name of ["core", ...heavy] as ModuleName[]) {
-    onProgress(name === "core" ? "Starting the engine" : `Loading the ${name === "ocr" ? "text recognition" : "page renderer"}`, null);
+    onProgress(name === "core" ? "Starting the engine" : `Loading the ${LOADING[name]}`, null);
     modules[name] = await compile(name);
   }
   const worker = new Worker(scriptURL("./worker.js"), { type: "module", name: `pdfvault-${toolId}` });

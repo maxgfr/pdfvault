@@ -36,6 +36,10 @@ fn main() {
         ("photo.jpg", f::jpeg(&f::photo(1200, 800, 5), 95)),
         ("photo.png", f::png(&photo)),
         ("signature.png", f::png(&sig)),
+        ("sample.docx", f::docx()),
+        ("sample.xlsx", f::xlsx()),
+        ("sample.pptx", f::pptx()),
+        ("legacy.doc", f::legacy_doc()),
     ];
     for (name, bytes) in files {
         std::fs::write(dir.join(name), bytes).expect("write fixture");

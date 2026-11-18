@@ -9,7 +9,7 @@ import { fixture, runTool, sha256 } from "./helpers.ts";
 
 const cli = process.env.PDFVAULT_BIN ? [process.env.PDFVAULT_BIN] : ["bun", "packages/cli/src/main.ts"];
 
-const cases: { id: string; title: string; files: string[]; ui: Record<string, string>; args: string[] }[] = [
+const cases: { id: string; name?: string; title: string; files: string[]; ui: Record<string, string>; args: string[] }[] = [
   { id: "compress", title: "Compress PDF", files: ["photo.pdf"], ui: { Level: "strong" }, args: ["--preset", "strong"] },
   { id: "merge", title: "Merge PDFs", files: ["text-3.pdf", "text-5.pdf"], ui: {}, args: [] },
   { id: "watermark", title: "Watermark", files: ["text-3.pdf"], ui: { Text: "DRAFT" }, args: ["--text", "DRAFT"] },
@@ -17,6 +17,9 @@ const cases: { id: string; title: string; files: string[]; ui: Record<string, st
   { id: "img-compress", title: "Compress images", files: ["photo.jpg"], ui: { "JPEG quality": "40" }, args: ["--quality", "40"] },
   { id: "to-md", title: "PDF to Markdown", files: ["text-3.pdf"], ui: {}, args: [] },
   { id: "md2pdf", title: "Markdown to PDF", files: ["notes.md"], ui: {}, args: [] },
+  // Not with PDF/A: it stamps the conversion time.
+  { id: "office2pdf", title: "Office to PDF", files: ["sample.docx"], ui: { "Page size": "letter" }, args: ["--paper-size", "letter"] },
+  { id: "office2pdf", name: "office2pdf (xlsx)", title: "Office to PDF", files: ["sample.xlsx"], ui: {}, args: [] },
   { id: "combine", title: "Combine into one PDF", files: ["photo.jpg", "text-3.pdf"], ui: {}, args: [] },
 ];
 
@@ -47,7 +50,7 @@ test("parity: scan (detected corners sent back by the page)", async ({ page }) =
 });
 
 for (const c of cases) {
-  test(`parity: ${c.id}`, async ({ page }) => {
+  test(`parity: ${c.name ?? c.id}`, async ({ page }) => {
     const { bytes } = await runTool(page, c.id, c.title, [c.files], c.ui);
     const dir = await mkdtemp(join(tmpdir(), "pdfvault-parity-"));
     try {

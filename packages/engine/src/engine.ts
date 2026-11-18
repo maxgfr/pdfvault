@@ -1,11 +1,12 @@
 import initCore, * as core from "../wasm/core/core.js";
 import initOcr, * as ocr from "../wasm/ocr/ocr.js";
+import initOffice, * as office from "../wasm/office/office.js";
 import initRender, * as render from "../wasm/render/render.js";
 import { EngineError, toEngineError } from "./errors.ts";
 import { BUNDLED_FONTS, type FontFile, type FontKey } from "./fonts.ts";
 import type { ModelName } from "./models.ts";
 
-export type ModuleName = "core" | "render" | "ocr";
+export type ModuleName = "core" | "render" | "ocr" | "office";
 export type WasmSource = BufferSource | WebAssembly.Module | Response;
 
 /**
@@ -51,8 +52,8 @@ interface RawResult {
 }
 
 /**
- * The single gateway to the wasm modules. Render and OCR load on first use,
- * so a compression job never pays for the rasterizer or the models.
+ * The single gateway to the wasm modules. Render, OCR and Office load on first
+ * use, so a compression job never pays for the rasterizer, the models or Typst.
  */
 export class Engine {
   #loader: Loader;
@@ -64,7 +65,7 @@ export class Engine {
   }
 
   #load(name: ModuleName): Promise<void> {
-    const init = { core: initCore, render: initRender, ocr: initOcr }[name];
+    const init = { core: initCore, render: initRender, ocr: initOcr, office: initOffice }[name];
     this.#ready[name] ??= (async () => {
       await init({ module_or_path: await this.#loader.wasm(name) });
       if (name === "ocr") {
@@ -86,7 +87,7 @@ export class Engine {
     return this.#ready[name];
   }
 
-  async #call<R>(mod: typeof core | typeof render, name: ModuleName, op: string, inputs: Uint8Array[], options: object): Promise<RunResult<R>> {
+  async #call<R>(mod: typeof core | typeof render | typeof office, name: ModuleName, op: string, inputs: Uint8Array[], options: object): Promise<RunResult<R>> {
     await this.#load(name);
     let raw: RawResult;
     try {
@@ -105,6 +106,11 @@ export class Engine {
   /** Run a pdfvault-render operation. */
   render<R = unknown>(op: string, inputs: Uint8Array[], options: object = {}): Promise<RunResult<R>> {
     return this.#call<R>(render, "render", op, inputs, options);
+  }
+
+  /** Run a pdfvault-office operation (Word, Excel, PowerPoint to PDF). */
+  office<R = unknown>(op: string, inputs: Uint8Array[], options: object = {}): Promise<RunResult<R>> {
+    return this.#call<R>(office, "office", op, inputs, options);
   }
 
   /** Recognize text in raw pixels (RGBA, RGB or gray). */

@@ -41,11 +41,11 @@ test("photos the browser decodes become JPEG; a HEIC it cannot says what to do",
 test("a mixed drop: compress each file with the right tool, keep the results, chain", async ({ page }) => {
   const w = await watch(page);
   await page.goto("./");
-  await drop(page, ["photo.jpg", "text-3.pdf", { name: "report.docx", mimeType: "application/octet-stream", buffer: Buffer.from("PK\x03\x04 not really a document") }]);
+  await drop(page, ["photo.jpg", "text-3.pdf", { name: "report.doc", mimeType: "application/msword", buffer: await readFile(fixture("legacy.doc")) }]);
   await expect(page.getByRole("heading", { level: 1, name: "Your files" })).toBeVisible();
   await expect(page.locator(".ws-file")).toHaveCount(3);
-  await expect(card(page, "report.docx")).toContainText("Export it to PDF");
-  await expect(card(page, "report.docx").getByRole("checkbox")).toBeDisabled();
+  await expect(card(page, "report.doc")).toContainText("Save it as .docx, .xlsx or .pptx");
+  await expect(card(page, "report.doc").getByRole("checkbox")).toBeDisabled();
   await expect(card(page, "text-3.pdf")).toContainText("3 pages", { timeout: 60_000 });
 
   await page.getByRole("button", { name: "Compress", exact: true }).click();
@@ -86,6 +86,41 @@ test("photos and PDFs combine into one PDF, in the order shown", async ({ page }
   await expect(results.getByText("photo-combined.pdf")).toBeVisible({ timeout: 90_000 });
   await results.getByRole("button", { name: "Add to your files" }).click();
   await expect(page.locator(".ws-file")).toHaveCount(4);
+});
+
+test("an Office file converts to PDF in its place; OpenDocument says what to do", async ({ page }) => {
+  const w = await watch(page);
+  await page.goto("./");
+  await drop(page, [
+    "sample.docx",
+    { name: "notes.odt", mimeType: "application/vnd.oasis.opendocument.text", buffer: Buffer.from("PK\x03\x04 an OpenDocument text") },
+  ]);
+  await expect(card(page, "sample.docx")).toContainText("Word document");
+  await expect(card(page, "notes.odt")).toContainText("Export it from its app as PDF, or as .docx, .xlsx or .pptx");
+  await expect(card(page, "notes.odt").getByRole("checkbox")).toBeDisabled();
+  // An Office file is converted first; PDF tools come after.
+  await expect(page.getByRole("button", { name: "Compress", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Convert to PDF", exact: true }).click();
+  const panel = page.locator(".ws-panel");
+  await panel.getByRole("button", { name: "Convert to PDF", exact: true }).click();
+  const results = panel.getByRole("region", { name: "Results" });
+  await expect(results.getByText("sample.pdf")).toBeVisible({ timeout: 90_000 });
+  await expect(results.locator(".report")).toContainText("1 page.");
+  await results.getByRole("button", { name: "Use this version" }).click();
+  await expect(card(page, "sample.pdf")).toContainText("1 page", { timeout: 60_000 });
+  await expect(page.getByRole("button", { name: "Compress", exact: true })).toBeVisible();
+  await w.assertClean();
+});
+
+test("Office files combine with PDFs, converted in their place", async ({ page }) => {
+  await page.goto("./");
+  await drop(page, ["sample.pptx", "text-3.pdf"]);
+  await page.getByRole("button", { name: "Combine into one PDF" }).first().click();
+  const panel = page.locator(".ws-panel");
+  await panel.getByRole("button", { name: "Combine into one PDF", exact: true }).click();
+  const results = panel.getByRole("region", { name: "Results" });
+  await expect(results.getByText("sample-combined.pdf")).toBeVisible({ timeout: 90_000 });
+  await expect(results.locator(".report dd").first()).toHaveText("5");
 });
 
 test("every registry tool is reachable from a selection", async ({ page }) => {

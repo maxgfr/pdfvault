@@ -15,6 +15,7 @@ test("nothing leaves the origin while working, including the heavy engines", asy
   await page.goto("./");
   await runTool(page, "compress", "Compress PDF", [["photo.pdf"]], { Level: "extreme" });
   await runTool(page, "ocr", "OCR (searchable PDF)", [["scan.pdf"]], { Pages: "1" });
+  await runTool(page, "office2pdf", "Office to PDF", [["sample.docx"]]);
   await w.assertClean();
 });
 
@@ -56,12 +57,14 @@ test("works offline after the first visit", async ({ page, context }) => {
   await page.goto("./");
   await page.evaluate(() => navigator.serviceWorker.ready);
   await expect(page.getByText("Available offline")).toBeVisible();
-  // Use the renderer once so it is cached too.
+  // Use the renderer and the Office converter once so they are cached too.
   await runTool(page, "pdf2img", "PDF to images", [["text-3.pdf"]], { Resolution: "40" });
+  await runTool(page, "office2pdf", "Office to PDF", [["sample.xlsx"]]);
   await context.setOffline(true);
   await page.reload();
   await runTool(page, "compress", "Compress PDF", [["photo.pdf"]]);
   await runTool(page, "pdf2img", "PDF to images", [["text-3.pdf"]], { Resolution: "40" });
+  await runTool(page, "office2pdf", "Office to PDF", [["sample.xlsx"]]);
   await context.setOffline(false);
 });
 

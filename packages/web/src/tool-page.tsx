@@ -5,15 +5,21 @@ import { CropPreview } from "./crop-box.tsx";
 import { Icon } from "./icons.tsx";
 import { bytes } from "./reports.tsx";
 import { vault, type VaultFile } from "./vault.ts";
-import { isImage, isPdf, workspace } from "./workspace.ts";
+import { isImage, isPdf, isZip, workspace } from "./workspace.ts";
 
 export { download, type InFile } from "./action-panel.tsx";
 
-type SlotKind = "pdf" | "image" | "any" | "text";
+type SlotKind = "pdf" | "image" | "any" | "text" | "office";
 
 const PDF_ACCEPT = "application/pdf,.pdf";
 const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp,image/gif,image/bmp";
 const MARKDOWN_ACCEPT = ".md,.markdown,.txt,text/markdown,text/plain";
+const OFFICE_ACCEPT = [
+  ".docx,.xlsx,.pptx",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+].join(",");
 
 /** Which drop slots a tool shows. Paired tools get two labeled slots. */
 function slots(tool: Tool): { label: string; accept: string; multiple: boolean; kind: SlotKind }[] {
@@ -29,7 +35,7 @@ function slots(tool: Tool): { label: string; accept: string; multiple: boolean; 
     case "images":
       return [{ ...image, label: "Images, one per page", multiple: true }];
     case "mixed":
-      return [{ accept: `${PDF_ACCEPT},${IMAGE_ACCEPT}`, kind: "any", label: "PDFs and images, in order", multiple: true }];
+      return [{ accept: `${PDF_ACCEPT},${IMAGE_ACCEPT},${OFFICE_ACCEPT}`, kind: "any", label: "PDFs, images and Office files, in order", multiple: true }];
     case "pdf+image":
       return [
         { ...pdf, label: "PDF", multiple: false },
@@ -47,13 +53,21 @@ function slots(tool: Tool): { label: string; accept: string; multiple: boolean; 
       ];
     case "markdown":
       return [{ accept: MARKDOWN_ACCEPT, kind: "text", label: "Markdown files", multiple: true }];
+    case "office":
+      return [{ accept: OFFICE_ACCEPT, kind: "office", label: "Word, Excel or PowerPoint files", multiple: true }];
   }
 }
 
 const isText = (b: Uint8Array) => !isPdf(b) && !isImage(b) && !b.includes(0);
 const fits = (kind: SlotKind, b: Uint8Array) =>
-  kind === "pdf" ? isPdf(b) : kind === "image" ? isImage(b) : kind === "text" ? isText(b) : isPdf(b) || isImage(b);
-const kindName: Record<SlotKind, string> = { pdf: "a PDF", image: "an image", any: "a PDF or an image", text: "a Markdown file" };
+  kind === "pdf" ? isPdf(b) : kind === "image" ? isImage(b) : kind === "text" ? isText(b) : kind === "office" ? isZip(b) : isPdf(b) || isImage(b) || isZip(b);
+const kindName: Record<SlotKind, string> = {
+  pdf: "a PDF",
+  image: "an image",
+  any: "a PDF, an image or an Office file",
+  text: "a Markdown file",
+  office: "a .docx, .xlsx or .pptx file",
+};
 
 export function Drop({
   label,

@@ -39,7 +39,7 @@ jobs:
       - run: bun scripts/fetch-models.ts
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo clippy --target wasm32-unknown-unknown -p pdfvault-wasm-core -p pdfvault-wasm-render -p pdfvault-wasm-ocr -- -D warnings
+      - run: cargo clippy --target wasm32-unknown-unknown -p pdfvault-wasm-core -p pdfvault-wasm-render -p pdfvault-wasm-ocr -p pdfvault-wasm-office -- -D warnings
       - run: cargo test --workspace
       - name: cargo deny
         run: |

@@ -1,0 +1,38 @@
+# osv-scanner (CI): the advisories deny.toml ignores, with the same reasons.
+# All are reached only through office2pdf (pdfvault-office, its own lazy wasm module).
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0194"
+reason = "quick-xml 0.38.4 via typst-library -> hayagriva -> citationberg, which parses CSL styles for Typst bibliographies: office2pdf never emits one and its Typst world serves no file but its own source and images, so only Typst's bundled CSL data reaches it, never user input"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0195"
+reason = "quick-xml 0.38.4 NsReader via typst-library -> hayagriva -> citationberg; same path as RUSTSEC-2026-0194, Typst's bundled CSL data only"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0141"
+reason = "bincode 1 (unmaintained) via typst-library -> two-face / syntect, which decodes the syntax sets bundled in the binary, not document text"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0543"
+reason = "chrono (unmaintained) via office2pdf -> office2pdf-umya-spreadsheet, for spreadsheet dates"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+reason = "paste (unmaintained proc-macro, build time only) via typst-library -> hayagriva / biblatex, and image -> ravif -> rav1e"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0206"
+reason = "rustybuzz (unmaintained) via typst-library, typst-layout and krilla: Typst's text shaper"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0192"
+reason = "ttf-parser (unmaintained) via typst-library, fontdb, rustybuzz and krilla: Typst's font reader"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0449"
+reason = "unsafe-libyaml (unmaintained) via typst-library and hayagriva -> serde_yaml, behind Typst's yaml() and YAML bibliographies, which office2pdf never emits"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0320"
+reason = "yaml-rust (unmaintained) via typst-library -> two-face / syntect, which reads syntax definitions (the bundled ones), not the code it highlights"

@@ -65,8 +65,17 @@ export function FileDrop() {
   );
 }
 
+const OFFICE_KIND: Record<string, string> = { docx: "Word document", xlsx: "Excel workbook", pptx: "PowerPoint presentation" };
+
 function describe(f: WorkFile): string {
-  const kind = f.kind === "pdf" ? `PDF${f.pages ? ` · ${f.pages} page${f.pages > 1 ? "s" : ""}` : ""}` : f.kind === "image" ? "Image" : "Not supported";
+  const kind =
+    f.kind === "pdf"
+      ? `PDF${f.pages ? ` · ${f.pages} page${f.pages > 1 ? "s" : ""}` : ""}`
+      : f.kind === "image"
+        ? "Image"
+        : f.kind === "office"
+          ? (OFFICE_KIND[f.name.toLowerCase().split(".").pop() ?? ""] ?? "Office document")
+          : "Not supported";
   return `${kind} · ${bytes(f.bytes.length)}`;
 }
 
